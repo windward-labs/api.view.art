@@ -71,14 +71,20 @@ pub async fn log_channel_view(
     Path(channel): Path<String>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+
+    // Extract user IP and normalize item ID
     let user = addr.ip().to_string();
     let channel = channel.to_ascii_lowercase();
     tracing::info!("Log channel view for channel {}", channel);
 
+    // Generate Redis keys for item stream tracking
     let channel_view_key = channel_view_key(&channel);
     let user_view_key = user_view_key(&user, &channel);
+
+    // Get current timestamp
     let now = chrono::Utc::now().timestamp_millis();
 
+    // Get Redis connection
     let mut conn = state.pool.get().await.map_err(|err| {
         tracing::error!("Error getting Redis connection: {:?}", err);
         (
@@ -87,22 +93,30 @@ pub async fn log_channel_view(
         )
     })?;
 
+    // Define time ranges for top channels
     let time_ranges: Vec<(&str, i64)> = vec![
         ("daily", 24 * 60 * 60),        // 24 hours
         ("weekly", 7 * 24 * 60 * 60),   // 7 days
         ("monthly", 30 * 24 * 60 * 60), // 30 days
     ];
 
+    // Define the number of top channels to track
     let top_channels_count = 30;
 
+    // Check if the channel exists
     check_channel_exists(&mut conn, &channel).await?;
+
+    // Check rate limit for the user and add rate limit key if not already set
     check_rate_limit(&mut conn, &user_view_key, &channel).await?;
+
+    // Increment the view count at the current timestamp
     increment_ts_key(&mut conn, &channel_view_key, 1, Some(now)).await?;
 
     for (time_range_key, retention) in time_ranges.iter() {
         process_time_range(&mut conn, &channel, time_range_key, *retention, now, top_channels_count).await?;
     }
 
+    tracing::info!("Logged channel view");
     Ok((StatusCode::OK, json!({ "status": true }).to_string()))
 }
 
@@ -167,29 +181,6 @@ pub async fn log_item_stream(
     }
 
     (StatusCode::OK, json!({ "status": true }).to_string())
-}
-
-async fn check_channel_exists(
-    conn: &mut PooledConnection<'_, RedisConnectionManager>,
-    channel: &str,
-) -> Result<(), (StatusCode, String)> {
-    let channel_key = channel_key(channel);
-    let exists = conn.exists::<_, bool>(&channel_key).await.map_err(|err| {
-        tracing::error!("Error checking if channel exists: {:?}", err);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({ "error": "Redis error while checking existence" }).to_string(),
-        )
-    })?;
-
-    if !exists {
-        tracing::warn!("Channel {} does not exist", channel);
-        return Err((
-            StatusCode::NOT_FOUND,
-            json!({ "error": "Channel does not exist" }).to_string(),
-        ));
-    }
-    Ok(())
 }
 
 async fn process_time_range(
@@ -258,6 +249,29 @@ async fn process_time_range(
         delete_key(conn, &min_channel.0).await?;
     }
 
+    Ok(())
+}
+
+async fn check_channel_exists(
+    conn: &mut PooledConnection<'_, RedisConnectionManager>,
+    channel: &str,
+) -> Result<(), (StatusCode, String)> {
+    let channel_key = channel_key(channel);
+    let exists = conn.exists::<_, bool>(&channel_key).await.map_err(|err| {
+        tracing::error!("Error checking if channel exists: {:?}", err);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": "Redis error while checking existence" }).to_string(),
+        )
+    })?;
+
+    if !exists {
+        tracing::warn!("Channel {} does not exist", channel);
+        return Err((
+            StatusCode::NOT_FOUND,
+            json!({ "error": "Channel does not exist" }).to_string(),
+        ));
+    }
     Ok(())
 }
 
@@ -347,7 +361,7 @@ async fn get_sorted_top_channels(
 
     // Process the collected keys
     for key in keys {
-        let value: Option<(i64, i64)> = conn.get(&key).await.map_err(|err| {
+        let value: Option<(i64, String)> = conn.ts_get(&key).await.map_err(|err| {
             tracing::error!("Failed to get value for key {}: {:?}", key, err);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -355,7 +369,8 @@ async fn get_sorted_top_channels(
             )
         })?;
 
-        if let Some((timestamp, count)) = value {
+        if let Some((timestamp, count_str)) = value {
+            let count = count_str.parse::<i64>().unwrap_or(0);
             let channel_name = key.trim_start_matches("channel_views:").to_string();
             channels_with_counts.insert(channel_name, (count as usize, timestamp));
         }
@@ -427,6 +442,11 @@ pub trait TimeSeriesCommands: Send {
         start_time: i64,
         end_time: i64,
     ) -> Pin<Box<dyn Future<Output = RedisResult<Vec<(i64, String)>>> + Send + 'a>>;
+
+    fn ts_get<'a>(
+        &'a mut self,
+        key: &'a str,
+    ) -> Pin<Box<dyn Future<Output = RedisResult<Option<(i64, String)>>> + Send + 'a>>;
 }
 
 impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
@@ -481,6 +501,18 @@ impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
                 .arg(key)
                 .arg(start_time)
                 .arg(end_time)
+                .query_async(self)
+                .await
+        })
+    }
+
+    fn ts_get<'a>(
+        &'a mut self,
+        key: &'a str,
+    ) -> Pin<Box<dyn Future<Output = RedisResult<Option<(i64, String)>>> + Send + 'a>> {
+        Box::pin(async move {
+            redis::cmd("TS.GET")
+                .arg(key)
                 .query_async(self)
                 .await
         })
