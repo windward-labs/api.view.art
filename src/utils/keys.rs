@@ -8,7 +8,7 @@ pub const USER_VIEW_KEY: &str = "user_views";
 pub const USER_STREAM_KEY: &str = "user_streams";
 pub const NONCE_KEY: &str = "nonce";
 pub const TOP_CHANNEL_KEY: &str = "top_channels";
-
+pub const TOP_ITEM_KEY: &str = "top_items";
 /// Returns an ethers style address key, no longer used in the DB
 pub fn old_address_key(address: &Address) -> String {
     format!("{}:{:#}", ADDRESS_KEY, address).to_lowercase()
@@ -42,8 +42,16 @@ pub fn top_channel_key(range: &str, channel: &str) -> String {
     format!("{}:{}:{}", TOP_CHANNEL_KEY, range, channel).to_ascii_lowercase()
 }
 
-pub fn all_top_channel_key(range: &str) -> String {
+pub fn all_top_channels_key(range: &str) -> String {
     format!("{}:{}:*", TOP_CHANNEL_KEY, range).to_ascii_lowercase()
+}
+
+pub fn top_item_key(range: &str, item_caid: &str) -> String {
+    format!("{}:{}:{}", TOP_ITEM_KEY, range, item_caid).to_ascii_lowercase()
+}
+
+pub fn all_top_items_key(range: &str) -> String {
+    format!("{}:{}:*", TOP_ITEM_KEY, range).to_ascii_lowercase()
 }
 
 pub fn nonce_key(address: &Address, chain_id: u64) -> String {
@@ -143,12 +151,30 @@ mod tests {
     }
 
     #[test]
-    fn test_all_top_channel_key() {
-        let key = all_top_channel_key("daily");
+    fn test_all_top_channels_key() {
+        let key = all_top_channels_key("daily");
         assert_eq!(key, "top_channels:daily:*");
 
-        let key = all_top_channel_key("DAILY");
+        let key = all_top_channels_key("DAILY");
         assert_eq!(key, "top_channels:daily:*");
+    }
+
+    #[test]
+    fn test_top_item_key() {
+        let key = top_item_key("daily", "testitem");
+        assert_eq!(key, "top_items:daily:testitem");
+
+        let key = top_item_key("DAILY", "TESTITEM");
+        assert_eq!(key, "top_items:daily:testitem");
+    }
+
+    #[test]
+    fn test_all_top_items_key() {
+        let key = all_top_items_key("daily");
+        assert_eq!(key, "top_items:daily:*");
+
+        let key = all_top_items_key("DAILY");
+        assert_eq!(key, "top_items:daily:*");
     }
 
     #[test]

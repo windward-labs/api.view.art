@@ -1,13 +1,14 @@
 use {
     crate::{
-        routes::internal_error,
         utils::{
             keys::{
-                all_top_channel_key,
+                all_top_channels_key,
+                all_top_items_key,
                 channel_key,
                 channel_view_key,
                 item_stream_key,
                 top_channel_key,
+                top_item_key,
                 user_stream_key,
                 user_view_key,
             },
@@ -16,7 +17,6 @@ use {
         },
         AppState,
     },
-    anyhow::anyhow,
     axum::{
         extract::{ConnectInfo, Path, State},
         http::StatusCode,
@@ -25,7 +25,7 @@ use {
     },
     bb8::PooledConnection,
     bb8_redis::{
-        redis::{AsyncCommands, AsyncIter, RedisError},
+        redis::{AsyncCommands, AsyncIter},
         RedisConnectionManager,
     },
     serde_json::json,
@@ -117,7 +117,7 @@ pub async fn log_channel_view(
     for (time_range_key, retention) in time_ranges.iter() {
         // Generate the Redis keys for the time range
         let channel_in_time_range_key = top_channel_key(time_range_key, &channel);
-        let all_top_channels_key = all_top_channel_key(time_range_key);
+        let all_top_channels_key = all_top_channels_key(time_range_key);
 
         let params = TimeRangeParams {
             target_count_key: channel_view_key.to_string(),
@@ -140,64 +140,65 @@ pub async fn log_item_stream(
     state: State<AppState>,
     Path(item_id): Path<String>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     // Extract user IP and normalize item ID
     let user = addr.ip().to_string();
     let item_id = item_id.to_ascii_lowercase();
     tracing::info!("Log item stream for item with id {}", item_id);
 
+    // Generate Redis keys
     let item_stream_key = item_stream_key(&item_id);
+    let target_key_prefix = "item_streams:";
     let user_stream_key = user_stream_key(&user, &item_id);
 
-    match state.pool.get().await {
-        Ok(mut conn) => {
-            let ttl_seconds = 600; // 10 minutes in seconds
+    // Get current timestamp
+    let now = chrono::Utc::now().timestamp_millis();
 
-            let set_result: Result<bool, RedisError> = redis::cmd("SET")
-                .arg(&user_stream_key)
-                .arg(&item_id)
-                .arg("NX")
-                .arg("EX")
-                .arg(ttl_seconds)
-                .query_async(&mut *conn)
-                .await;
+    // Get Redis connection
+    let mut conn = state.pool.get().await.map_err(|err| {
+        tracing::error!("Error getting Redis connection: {:?}", err);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": "Failed to connect to Redis" }).to_string(),
+        )
+    })?;
 
-            match set_result {
-                Ok(true) => {
-                    tracing::info!("Set view and rate limit for user");
-                    // Increment the count at the current timestamp by 1
-                    if let Err(err) = conn
-                        .ts_incrby(
-                            &item_stream_key,
-                            1,
-                            Some(chrono::Utc::now().timestamp_millis()),
-                        )
-                        .await
-                    {
-                        tracing::error!(
-                            "Error logging item stream for {}: {:?}",
-                            item_stream_key,
-                            err
-                        );
-                        return internal_error(anyhow!(err));
-                    }
-                }
-                Ok(false) => {
-                    tracing::info!("User already viewed item within the last 10 minutes");
-                }
-                Err(err) => {
-                    tracing::error!("Error applying rate limit for {}: {:?}", user, err);
-                    return internal_error(anyhow!(err));
-                }
-            }
-        }
-        Err(err) => {
-            tracing::error!("Error getting connection from pool: {:?}", err);
-            return internal_error(anyhow!(err));
-        }
+    // Define time ranges for top items
+    let time_ranges: Vec<(&str, i64)> = vec![
+        ("daily", 24 * 60 * 60),        // 24 hours
+        ("weekly", 7 * 24 * 60 * 60),   // 7 days
+        ("monthly", 30 * 24 * 60 * 60), // 30 days
+    ];
+
+    // Define the number of top items to track
+    let top_items_count = 30;
+
+    // Check rate limit for the user and add rate limit key if not already set
+    check_rate_limit(&mut conn, &user_stream_key, &item_id).await?;
+
+    // Increment the stream count at the current timestamp
+    increment_ts_key(&mut conn, &item_stream_key, 1, Some(now)).await?;
+
+    for (time_range_key, retention) in time_ranges.iter() {
+        // Generate the Redis keys for the time range
+        let item_in_time_range_key = top_item_key(time_range_key, &item_id);
+        let all_top_items_key = all_top_items_key(time_range_key);
+
+        let params = TimeRangeParams {
+            target_count_key: item_stream_key.to_string(),
+            target_key_prefix: target_key_prefix.to_string(),
+            target_in_time_range_key: item_in_time_range_key.to_string(),
+            all_top_targets_key: all_top_items_key.to_string(),
+            retention: *retention,
+            now,
+            top_targets_count: top_items_count,
+        };
+
+        process_time_range(&mut conn, params).await?;
     }
 
-    (StatusCode::OK, json!({ "status": true }).to_string())
+    tracing::info!("Logged item stream");
+    Ok((StatusCode::OK, json!({ "status": true }).to_string()))
 }
 
 struct TimeRangeParams {
