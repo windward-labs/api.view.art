@@ -115,7 +115,6 @@ pub async fn log_channel_view(
     increment_ts_key(&mut conn, &channel_view_key, 1, Some(now)).await?;
 
     for (time_range_key, retention) in time_ranges.iter() {
-
         // Generate the Redis keys for the time range
         let channel_in_time_range_key = top_channel_key(time_range_key, &channel);
         let all_top_channels_key = all_top_channel_key(time_range_key);
@@ -142,6 +141,7 @@ pub async fn log_item_stream(
     Path(item_id): Path<String>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
+    // Extract user IP and normalize item ID
     let user = addr.ip().to_string();
     let item_id = item_id.to_ascii_lowercase();
     tracing::info!("Log item stream for item with id {}", item_id);
@@ -223,7 +223,8 @@ async fn process_time_range(
             )
         })?;
 
-    let sorted_targets = get_sorted_top_targets(conn, target_key_prefix, all_top_targets_key).await?;
+    let sorted_targets =
+        get_sorted_top_targets(conn, target_key_prefix, all_top_targets_key).await?;
 
     let min_target = sorted_targets
         .last()
@@ -313,8 +314,7 @@ async fn check_rate_limit(
         tracing::info!("User already viewed target within the last 10 minutes");
         return Err((
             StatusCode::BAD_REQUEST,
-            json!({ "error": "User already viewed target within the last 10 minutes" })
-                .to_string(),
+            json!({ "error": "User already viewed target within the last 10 minutes" }).to_string(),
         ));
     }
 
