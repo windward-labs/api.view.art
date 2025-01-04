@@ -88,91 +88,19 @@ pub async fn log_channel_view(
     })?;
 
     let time_ranges: Vec<(&str, i64)> = vec![
-            ("daily", 24 * 60 * 60),        // 24 hours
-            ("weekly", 7 * 24 * 60 * 60),   // 7 days
-            ("monthly", 30 * 24 * 60 * 60), // 30 days
-        ];
+        ("daily", 24 * 60 * 60),        // 24 hours
+        ("weekly", 7 * 24 * 60 * 60),   // 7 days
+        ("monthly", 30 * 24 * 60 * 60), // 30 days
+    ];
 
     let top_channels_count = 30;
 
-    match check_channel_exists(&mut conn, &channel).await {
-        Ok(_) => (),
-        Err((status, message)) => return Err((status, message)),
-    }
-
-    match check_rate_limit(&mut conn, &user_view_key, &channel).await {
-        Ok(_) => (),
-        Err((status, message)) => return Err((status, message)),
-    }
-
-    match increment_ts_key(&mut conn, &channel_view_key, 1, Some(now)).await {
-        Ok(_) => (),
-        Err((status, message)) => return Err((status, message)),
-    }
+    check_channel_exists(&mut conn, &channel).await?;
+    check_rate_limit(&mut conn, &user_view_key, &channel).await?;
+    increment_ts_key(&mut conn, &channel_view_key, 1, Some(now)).await?;
 
     for (time_range_key, retention) in time_ranges.iter() {
-        let channel_in_time_range_key = top_channel_key(time_range_key, &channel);
-        let start_time = now - (retention * 1000);
-
-        // Get all views for the current channel for the current time range
-        let view_count: Result<Vec<(i64, String)>, _> = redis::cmd("TS.RANGE")
-            .arg(&channel_view_key)
-            .arg(start_time)
-            .arg(now)
-            .query_async(&mut *conn)
-            .await;
-
-        match view_count {
-            Ok(data_points) => {
-
-                let sorted_channels = get_sorted_top_channels(&mut conn, time_range_key, top_channels_count).await?;
-
-                let min_channel = sorted_channels
-                    .last()
-                    .map(|(name, count)| (name.clone(), *count))
-                    .unwrap_or(("".to_string(), 0));
-
-                let channel_exists = sorted_channels
-                    .iter()
-                    .any(|(name, _)| name == &channel_in_time_range_key);
-
-                if channel_exists {
-                    delete_key(&mut conn, &channel_in_time_range_key).await?;
-                }
-
-                let should_add_channel = channel_exists
-                    || sorted_channels.len() < top_channels_count
-                    || data_points.len() > min_channel.1;
-
-                if should_add_channel {
-                    for data_point in &data_points {
-                        let data_timestamp = data_point.0;
-                        let data_retention = data_timestamp + (retention * 1000) - now;
-                        let data_view_count = &data_point.1;
-
-                        if let Err((status, message)) = add_time_series_data(
-                            &mut conn,
-                            &channel_in_time_range_key,
-                            data_timestamp,
-                            data_view_count,
-                            data_retention
-                        ).await {
-                            return Err((status, message));
-                        }
-                    }
-                }
-
-                let should_delete = (!channel_exists && should_add_channel)
-                    && sorted_channels.len() >= top_channels_count;
-
-                if should_delete {
-                    delete_key(&mut conn, &min_channel.0).await?;
-                }
-            }
-            Err(err) => {
-                tracing::error!("Error getting view count: {:?}", err);
-            }
-        }
+        process_time_range(&mut conn, &channel, time_range_key, *retention, now, top_channels_count).await?;
     }
 
     Ok((StatusCode::OK, json!({ "status": true }).to_string()))
@@ -261,6 +189,75 @@ async fn check_channel_exists(
             json!({ "error": "Channel does not exist" }).to_string(),
         ));
     }
+    Ok(())
+}
+
+async fn process_time_range(
+    conn: &mut PooledConnection<'_, RedisConnectionManager>,
+    channel: &str,
+    time_range_key: &str,
+    retention: i64,
+    now: i64,
+    top_channels_count: usize,
+) -> Result<(), (StatusCode, String)> {
+    let channel_view_key = channel_view_key(channel);
+    let channel_in_time_range_key = top_channel_key(time_range_key, channel);
+    let start_time = now - (retention * 1000);
+
+    let data_points = conn
+        .ts_range(&channel_view_key, start_time, now)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error getting view count: {:?}", err);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "error": "Failed to get view count" }).to_string(),
+            )
+        })?;
+
+    let sorted_channels = get_sorted_top_channels(conn, time_range_key, top_channels_count).await?;
+
+    let min_channel = sorted_channels
+        .last()
+        .map(|(name, count)| (name.clone(), *count))
+        .unwrap_or(("".to_string(), 0));
+
+    let channel_exists = sorted_channels
+        .iter()
+        .any(|(name, _)| name == &channel_in_time_range_key);
+
+    if channel_exists {
+        delete_key(conn, &channel_in_time_range_key).await?;
+    }
+
+    let should_add_channel = channel_exists
+        || sorted_channels.len() < top_channels_count
+        || data_points.len() > min_channel.1;
+
+    if should_add_channel {
+        for data_point in &data_points {
+            let data_timestamp = data_point.0;
+            let data_retention = data_timestamp + (retention * 1000) - now;
+            let data_view_count = &data_point.1;
+
+            add_time_series_data(
+                conn,
+                &channel_in_time_range_key,
+                data_timestamp,
+                data_view_count,
+                data_retention,
+            )
+            .await?;
+        }
+    }
+
+    let should_delete = (!channel_exists && should_add_channel)
+        && sorted_channels.len() >= top_channels_count;
+
+    if should_delete {
+        delete_key(conn, &min_channel.0).await?;
+    }
+
     Ok(())
 }
 
@@ -423,6 +420,13 @@ pub trait TimeSeriesCommands: Send {
         value: &'a str,
         retention: i64,
     ) -> Pin<Box<dyn Future<Output = RedisResult<()>> + Send + 'a>>;
+
+    fn ts_range<'a>(
+        &'a mut self,
+        key: &'a str,
+        start_time: i64,
+        end_time: i64,
+    ) -> Pin<Box<dyn Future<Output = RedisResult<Vec<(i64, String)>>> + Send + 'a>>;
 }
 
 impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
@@ -463,6 +467,22 @@ impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
                 .arg("LAST");
 
             cmd.query_async(self).await
+        })
+    }
+
+    fn ts_range<'a>(
+        &'a mut self,
+        key: &'a str,
+        start_time: i64,
+        end_time: i64,
+    ) -> Pin<Box<dyn Future<Output = RedisResult<Vec<(i64, String)>>> + Send + 'a>> {
+        Box::pin(async move {
+            redis::cmd("TS.RANGE")
+                .arg(key)
+                .arg(start_time)
+                .arg(end_time)
+                .query_async(self)
+                .await
         })
     }
 }
