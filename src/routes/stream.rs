@@ -150,16 +150,15 @@ pub async fn log_channel_view(
                         let data_retention = data_timestamp + (retention * 1000) - now;
                         let data_view_count = &data_point.1;
 
-                        let _add_result: Result<(), _> = redis::cmd("TS.ADD")
-                            .arg(&channel_in_time_range_key)
-                            .arg(data_timestamp)
-                            .arg(data_view_count)
-                            .arg("RETENTION")
-                            .arg(data_retention)
-                            .arg("ON_DUPLICATE")
-                            .arg("LAST")
-                            .query_async(&mut *conn)
-                            .await;
+                        if let Err((status, message)) = add_time_series_data(
+                            &mut conn,
+                            &channel_in_time_range_key,
+                            data_timestamp,
+                            data_view_count,
+                            data_retention
+                        ).await {
+                            return Err((status, message));
+                        }
                     }
                 }
 
@@ -240,35 +239,6 @@ pub async fn log_item_stream(
     }
 
     (StatusCode::OK, json!({ "status": true }).to_string())
-}
-
-pub trait TimeSeriesCommands: Send {
-    fn ts_incrby<'a>(
-        &'a mut self,
-        key: &'a str,
-        increment: i64,
-        timestamp: Option<i64>,
-    ) -> Pin<Box<dyn Future<Output = RedisResult<()>> + Send + 'a>>;
-}
-
-impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
-    fn ts_incrby<'a>(
-        &'a mut self,
-        key: &'a str,
-        increment: i64,
-        timestamp: Option<i64>,
-    ) -> Pin<Box<dyn Future<Output = RedisResult<()>> + Send + 'a>> {
-        Box::pin(async move {
-            let mut cmd = Cmd::new();
-            cmd.arg("TS.INCRBY").arg(key).arg(increment);
-
-            if let Some(ts) = timestamp {
-                cmd.arg("TIMESTAMP").arg(ts);
-            }
-
-            cmd.query_async(self).await
-        })
-    }
 }
 
 async fn check_channel_exists(
@@ -418,4 +388,81 @@ async fn delete_key(
             json!({ "error": "Redis error while deleting key" }).to_string(),
         )
     })
+}
+
+async fn add_time_series_data(
+    conn: &mut PooledConnection<'_, RedisConnectionManager>,
+    key: &str,
+    timestamp: i64,
+    value: &str,
+    retention: i64,
+) -> Result<(), (StatusCode, String)> {
+    conn.ts_add(key, timestamp, value, retention)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error adding time series data for {}: {:?}", key, err);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "error": "Redis error while adding time series data" }).to_string(),
+            )
+        })
+}
+
+pub trait TimeSeriesCommands: Send {
+    fn ts_incrby<'a>(
+        &'a mut self,
+        key: &'a str,
+        increment: i64,
+        timestamp: Option<i64>,
+    ) -> Pin<Box<dyn Future<Output = RedisResult<()>> + Send + 'a>>;
+
+    fn ts_add<'a>(
+        &'a mut self,
+        key: &'a str,
+        timestamp: i64,
+        value: &'a str,
+        retention: i64,
+    ) -> Pin<Box<dyn Future<Output = RedisResult<()>> + Send + 'a>>;
+}
+
+impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
+    fn ts_incrby<'a>(
+        &'a mut self,
+        key: &'a str,
+        increment: i64,
+        timestamp: Option<i64>,
+    ) -> Pin<Box<dyn Future<Output = RedisResult<()>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut cmd = Cmd::new();
+            cmd.arg("TS.INCRBY").arg(key).arg(increment);
+
+            if let Some(ts) = timestamp {
+                cmd.arg("TIMESTAMP").arg(ts);
+            }
+
+            cmd.query_async(self).await
+        })
+    }
+
+    fn ts_add<'a>(
+        &'a mut self,
+        key: &'a str,
+        timestamp: i64,
+        value: &'a str,
+        retention: i64,
+    ) -> Pin<Box<dyn Future<Output = RedisResult<()>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut cmd = Cmd::new();
+            cmd.arg("TS.ADD")
+                .arg(key)
+                .arg(timestamp)
+                .arg(value)
+                .arg("RETENTION")
+                .arg(retention)
+                .arg("ON_DUPLICATE")
+                .arg("LAST");
+
+            cmd.query_async(self).await
+        })
+    }
 }
