@@ -23,7 +23,7 @@ use {
     },
     bb8::PooledConnection,
     bb8_redis::{
-        redis::{aio::ConnectionLike, AsyncCommands, Cmd, RedisError, RedisResult},
+        redis::{aio::ConnectionLike, AsyncCommands, Cmd, RedisError, RedisResult, AsyncIter},
         RedisConnectionManager,
     },
     serde_json::json,
@@ -123,59 +123,8 @@ pub async fn log_channel_view(
 
         match view_count {
             Ok(data_points) => {
-                // tracing::info!("Got {} data points", dataPoints.len());
 
-                let mut cursor = 0;
-                let mut channels_with_counts: HashMap<String, (usize, i64)> = HashMap::new();
-
-                // Get all top channels for the time range
-                loop {
-                    let all_top_channel_key = format!("top_channels:{}:*", time_range_key);
-
-                    let scan_result: Result<(u64, Vec<String>), _> = redis::cmd("SCAN")
-                        .arg(cursor)
-                        .arg("MATCH")
-                        .arg(all_top_channel_key)
-                        .query_async(&mut *conn)
-                        .await;
-
-                    match scan_result {
-                        Ok((next_cursor, keys)) => {
-                            for key in keys {
-                                let get_result: Result<Option<(i64, i64)>, _> =
-                                    redis::cmd("TS.GET").arg(&key).query_async(&mut *conn).await;
-
-                                if let Ok(Some((timestamp, value))) = get_result {
-                                    let channel_name =
-                                        key.trim_start_matches("channel_views:").to_string();
-                                    channels_with_counts
-                                        .insert(channel_name, (value as usize, timestamp));
-                                }
-                            }
-
-                            cursor = next_cursor;
-                            if cursor == 0 {
-                                break;
-                            }
-                        }
-                        Err(err) => {
-                            tracing::error!("Failed to scan Redis keys: {:?}", err);
-                        }
-                    }
-                }
-
-                // Sort by view count (descending), then by timestamp (descending)
-                let mut sorted_channels: Vec<(String, usize, i64)> = channels_with_counts
-                    .into_iter()
-                    .map(|(name, (views, timestamp))| (name, views, timestamp))
-                    .collect();
-                sorted_channels.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.cmp(&a.2)));
-
-                // Convert to final format needed by rest of code
-                let sorted_channels: Vec<(String, usize)> = sorted_channels
-                    .into_iter()
-                    .map(|(name, views, _)| (name, views))
-                    .collect();
+                let sorted_channels = get_sorted_top_channels(&mut conn, time_range_key, top_channels_count).await?;
 
                 let min_channel = sorted_channels
                     .last()
@@ -435,4 +384,59 @@ async fn increment_view_count(
                 json!({ "error": "Redis error while logging channel view" }).to_string(),
             )
         })
+}
+
+async fn get_sorted_top_channels(
+    conn: &mut PooledConnection<'_, RedisConnectionManager>,
+    time_range_key: &str,
+    _top_channels_count: usize,
+) -> Result<Vec<(String, usize)>, (StatusCode, String)> {
+    let mut channels_with_counts: HashMap<String, (usize, i64)> = HashMap::new();
+
+    // Get all top channels for the time range
+    let all_top_channel_key = format!("top_channels:{}:*", time_range_key);
+    
+    // Collect all keys
+    let mut keys: Vec<String> = Vec::new();
+    {
+        let mut scan: AsyncIter<'_, String> = conn.scan_match(&all_top_channel_key).await.map_err(|err| {
+            tracing::error!("Failed to create Redis scan: {:?}", err);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "error": "Failed to scan Redis keys" }).to_string(),
+            )
+        })?;
+
+        while let Some(key) = scan.next_item().await {
+            keys.push(key);
+        }
+    }
+
+    // Process the collected keys
+    for key in keys {
+        let value: Option<(i64, i64)> = conn.get(&key).await.map_err(|err| {
+            tracing::error!("Failed to get value for key {}: {:?}", key, err);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "error": "Failed to get channel data" }).to_string(),
+            )
+        })?;
+
+        if let Some((timestamp, count)) = value {
+            let channel_name = key.trim_start_matches("channel_views:").to_string();
+            channels_with_counts.insert(channel_name, (count as usize, timestamp));
+        }
+    }
+
+    // Sort by view count (descending), then by timestamp (descending)
+    let mut sorted_channels: Vec<(String, usize, i64)> = channels_with_counts
+        .into_iter()
+        .map(|(name, (views, timestamp))| (name, views, timestamp))
+        .collect();
+    sorted_channels.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.cmp(&a.2)));
+
+    Ok(sorted_channels
+        .into_iter()
+        .map(|(name, views, _)| (name, views))
+        .collect())
 }
