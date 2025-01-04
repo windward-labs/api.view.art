@@ -119,16 +119,16 @@ pub async fn log_channel_view(
         let channel_in_time_range_key = top_channel_key(time_range_key, &channel);
         let all_top_channels_key = all_top_channel_key(time_range_key);
 
-        process_time_range(
-            &mut conn,
-            &channel_view_key,
-            target_key_prefix,
-            &channel_in_time_range_key,
-            &all_top_channels_key,
-            *retention,
+        process_time_range(TimeRangeParams {
+            conn,
+            target_count_key: channel_view_key.to_string(),
+            target_key_prefix: target_key_prefix.to_string(),
+            target_in_time_range_key: channel_in_time_range_key.to_string(),
+            all_top_targets_key: all_top_channels_key.to_string(),
+            retention,
             now,
-            top_channels_count,
-        )
+            top_targets_count,
+        })
         .await?;
     }
 
@@ -200,31 +200,38 @@ pub async fn log_item_stream(
     (StatusCode::OK, json!({ "status": true }).to_string())
 }
 
-async fn process_time_range(
-    conn: &mut PooledConnection<'_, RedisConnectionManager>,
-    target_count_key: &str,
-    target_key_prefix: &str,
-    target_in_time_range_key: &str,
-    all_top_targets_key: &str,
+struct TimeRangeParams<'a> {
+    conn: &'a mut PooledConnection<'_, RedisConnectionManager>,
+    target_count_key: String,
+    target_key_prefix: String,
+    target_in_time_range_key: String,
+    all_top_targets_key: String,
     retention: i64,
     now: i64,
     top_targets_count: usize,
-) -> Result<(), (StatusCode, String)> {
-    let start_time = now - (retention * 1000);
+}
 
-    let data_points = conn
-        .ts_range(&target_count_key, start_time, now)
+async fn process_time_range(params: TimeRangeParams<'_>) -> Result<(), (StatusCode, String)> {
+    let start_time = params.now - (params.retention * 1000);
+
+    let data_points = params
+        .conn
+        .ts_range(params.target_count_key, start_time, params.now)
         .await
         .map_err(|err| {
-            tracing::error!("Error getting count for {}: {:?}", target_count_key, err);
+            tracing::error!("Error getting count for {}: {:?}", params.target_count_key, err);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({ "error": "Failed to get count" }).to_string(),
             )
         })?;
 
-    let sorted_targets =
-        get_sorted_top_targets(conn, target_key_prefix, all_top_targets_key).await?;
+    let sorted_targets = get_sorted_top_targets(
+        params.conn,
+        &params.target_key_prefix,
+        &params.all_top_targets_key,
+    )
+    .await?;
 
     let min_target = sorted_targets
         .last()
@@ -233,25 +240,25 @@ async fn process_time_range(
 
     let target_exists = sorted_targets
         .iter()
-        .any(|(name, _)| name == &target_in_time_range_key);
+        .any(|(name, _)| name == params.target_in_time_range_key);
 
     if target_exists {
-        delete_key(conn, &target_in_time_range_key).await?;
+        delete_key(params.conn, params.target_in_time_range_key).await?;
     }
 
     let should_add_target = target_exists
-        || sorted_targets.len() < top_targets_count
+        || sorted_targets.len() < params.top_targets_count
         || data_points.len() > min_target.1;
 
     if should_add_target {
         for data_point in &data_points {
             let data_timestamp = data_point.0;
-            let data_retention = data_timestamp + (retention * 1000) - now;
+            let data_retention = data_timestamp + (params.retention * 1000) - params.now;
             let data_view_count = &data_point.1;
 
             add_time_series_data(
-                conn,
-                &target_in_time_range_key,
+                params.conn,
+                &params.target_in_time_range_key,
                 data_timestamp,
                 data_view_count,
                 data_retention,
@@ -261,10 +268,10 @@ async fn process_time_range(
     }
 
     let should_delete =
-        (!target_exists && should_add_target) && sorted_targets.len() >= top_targets_count;
+        (!target_exists && should_add_target) && sorted_targets.len() >= params.top_targets_count;
 
     if should_delete {
-        delete_key(conn, &min_target.0).await?;
+        delete_key(params.conn, &min_target.0).await?;
     }
 
     Ok(())
@@ -342,8 +349,10 @@ async fn get_sorted_top_targets(
     // Get all top targets for the time range
     let mut keys: Vec<String> = Vec::new();
     {
-        let mut scan: AsyncIter<'_, String> =
-            conn.scan_match(&all_top_targets_key).await.map_err(|err| {
+        let mut scan: AsyncIter<'_, String> = conn
+            .scan_match(all_top_targets_key)
+            .await
+            .map_err(|err| {
                 tracing::error!("Failed to create Redis scan: {:?}", err);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
