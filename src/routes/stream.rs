@@ -120,14 +120,14 @@ pub async fn log_channel_view(
         let all_top_channels_key = all_top_channel_key(time_range_key);
 
         process_time_range(TimeRangeParams {
-            conn,
+            conn: &mut conn,
             target_count_key: channel_view_key.to_string(),
             target_key_prefix: target_key_prefix.to_string(),
             target_in_time_range_key: channel_in_time_range_key.to_string(),
             all_top_targets_key: all_top_channels_key.to_string(),
-            retention,
+            retention: *retention,
             now,
-            top_targets_count,
+            top_targets_count: top_channels_count,
         })
         .await?;
     }
@@ -201,7 +201,7 @@ pub async fn log_item_stream(
 }
 
 struct TimeRangeParams<'a> {
-    conn: &'a mut PooledConnection<'_, RedisConnectionManager>,
+    conn: &'a mut PooledConnection<'a, RedisConnectionManager>,
     target_count_key: String,
     target_key_prefix: String,
     target_in_time_range_key: String,
@@ -216,7 +216,7 @@ async fn process_time_range(params: TimeRangeParams<'_>) -> Result<(), (StatusCo
 
     let data_points = params
         .conn
-        .ts_range(params.target_count_key, start_time, params.now)
+        .ts_range(&params.target_count_key, start_time, params.now)
         .await
         .map_err(|err| {
             tracing::error!("Error getting count for {}: {:?}", params.target_count_key, err);
@@ -240,10 +240,10 @@ async fn process_time_range(params: TimeRangeParams<'_>) -> Result<(), (StatusCo
 
     let target_exists = sorted_targets
         .iter()
-        .any(|(name, _)| name == params.target_in_time_range_key);
+        .any(|(name, _)| *name == params.target_in_time_range_key);
 
     if target_exists {
-        delete_key(params.conn, params.target_in_time_range_key).await?;
+        delete_key(params.conn, &params.target_in_time_range_key).await?;
     }
 
     let should_add_target = target_exists
