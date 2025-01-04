@@ -119,8 +119,7 @@ pub async fn log_channel_view(
         let channel_in_time_range_key = top_channel_key(time_range_key, &channel);
         let all_top_channels_key = all_top_channel_key(time_range_key);
 
-        process_time_range(TimeRangeParams {
-            conn: &mut conn,
+        let params = TimeRangeParams {
             target_count_key: channel_view_key.to_string(),
             target_key_prefix: target_key_prefix.to_string(),
             target_in_time_range_key: channel_in_time_range_key.to_string(),
@@ -128,8 +127,9 @@ pub async fn log_channel_view(
             retention: *retention,
             now,
             top_targets_count: top_channels_count,
-        })
-        .await?;
+        };
+
+        process_time_range(&mut conn, params).await?;
     }
 
     tracing::info!("Logged channel view");
@@ -200,8 +200,7 @@ pub async fn log_item_stream(
     (StatusCode::OK, json!({ "status": true }).to_string())
 }
 
-struct TimeRangeParams<'a> {
-    conn: &'a mut PooledConnection<'a, RedisConnectionManager>,
+struct TimeRangeParams {
     target_count_key: String,
     target_key_prefix: String,
     target_in_time_range_key: String,
@@ -211,27 +210,30 @@ struct TimeRangeParams<'a> {
     top_targets_count: usize,
 }
 
-async fn process_time_range(params: TimeRangeParams<'_>) -> Result<(), (StatusCode, String)> {
+async fn process_time_range(
+    conn: &mut PooledConnection<'_, RedisConnectionManager>,
+    params: TimeRangeParams,
+) -> Result<(), (StatusCode, String)> {
     let start_time = params.now - (params.retention * 1000);
 
-    let data_points = params
-        .conn
+    let data_points = conn
         .ts_range(&params.target_count_key, start_time, params.now)
         .await
         .map_err(|err| {
-            tracing::error!("Error getting count for {}: {:?}", params.target_count_key, err);
+            tracing::error!(
+                "Error getting count for {}: {:?}",
+                params.target_count_key,
+                err
+            );
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({ "error": "Failed to get count" }).to_string(),
             )
         })?;
 
-    let sorted_targets = get_sorted_top_targets(
-        params.conn,
-        &params.target_key_prefix,
-        &params.all_top_targets_key,
-    )
-    .await?;
+    let sorted_targets =
+        get_sorted_top_targets(conn, &params.target_key_prefix, &params.all_top_targets_key)
+            .await?;
 
     let min_target = sorted_targets
         .last()
@@ -243,7 +245,7 @@ async fn process_time_range(params: TimeRangeParams<'_>) -> Result<(), (StatusCo
         .any(|(name, _)| *name == params.target_in_time_range_key);
 
     if target_exists {
-        delete_key(params.conn, &params.target_in_time_range_key).await?;
+        delete_key(conn, &params.target_in_time_range_key).await?;
     }
 
     let should_add_target = target_exists
@@ -257,7 +259,7 @@ async fn process_time_range(params: TimeRangeParams<'_>) -> Result<(), (StatusCo
             let data_view_count = &data_point.1;
 
             add_time_series_data(
-                params.conn,
+                conn,
                 &params.target_in_time_range_key,
                 data_timestamp,
                 data_view_count,
@@ -271,7 +273,7 @@ async fn process_time_range(params: TimeRangeParams<'_>) -> Result<(), (StatusCo
         (!target_exists && should_add_target) && sorted_targets.len() >= params.top_targets_count;
 
     if should_delete {
-        delete_key(params.conn, &min_target.0).await?;
+        delete_key(conn, &min_target.0).await?;
     }
 
     Ok(())
@@ -349,10 +351,8 @@ async fn get_sorted_top_targets(
     // Get all top targets for the time range
     let mut keys: Vec<String> = Vec::new();
     {
-        let mut scan: AsyncIter<'_, String> = conn
-            .scan_match(all_top_targets_key)
-            .await
-            .map_err(|err| {
+        let mut scan: AsyncIter<'_, String> =
+            conn.scan_match(all_top_targets_key).await.map_err(|err| {
                 tracing::error!("Failed to create Redis scan: {:?}", err);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
