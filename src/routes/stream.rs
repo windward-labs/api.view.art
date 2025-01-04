@@ -77,7 +77,9 @@ pub async fn log_channel_view(
     let channel = channel.to_ascii_lowercase();
     tracing::info!("Log channel view for channel {}", channel);
 
-    // Generate Redis keys for item stream tracking
+    // Generate Redis keys
+    let channel_key = channel_key(&channel);
+    let target_key_prefix = "channel_views:";
     let channel_view_key = channel_view_key(&channel);
     let user_view_key = user_view_key(&user, &channel);
 
@@ -104,7 +106,7 @@ pub async fn log_channel_view(
     let top_channels_count = 30;
 
     // Check if the channel exists
-    check_channel_exists(&mut conn, &channel).await?;
+    check_target_exists(&mut conn, &channel_key).await?;
 
     // Check rate limit for the user and add rate limit key if not already set
     check_rate_limit(&mut conn, &user_view_key, &channel).await?;
@@ -113,10 +115,17 @@ pub async fn log_channel_view(
     increment_ts_key(&mut conn, &channel_view_key, 1, Some(now)).await?;
 
     for (time_range_key, retention) in time_ranges.iter() {
+
+        // Generate the Redis keys for the time range
+        let channel_in_time_range_key = top_channel_key(time_range_key, &channel);
+        let all_top_channels_key = all_top_channel_key(time_range_key);
+
         process_time_range(
             &mut conn,
-            &channel,
-            time_range_key,
+            &channel_view_key,
+            target_key_prefix,
+            &channel_in_time_range_key,
+            &all_top_channels_key,
             *retention,
             now,
             top_channels_count,
@@ -193,47 +202,47 @@ pub async fn log_item_stream(
 
 async fn process_time_range(
     conn: &mut PooledConnection<'_, RedisConnectionManager>,
-    channel: &str,
-    time_range_key: &str,
+    target_count_key: &str,
+    target_key_prefix: &str,
+    target_in_time_range_key: &str,
+    all_top_targets_key: &str,
     retention: i64,
     now: i64,
-    top_channels_count: usize,
+    top_targets_count: usize,
 ) -> Result<(), (StatusCode, String)> {
-    let channel_view_key = channel_view_key(channel);
-    let channel_in_time_range_key = top_channel_key(time_range_key, channel);
     let start_time = now - (retention * 1000);
 
     let data_points = conn
-        .ts_range(&channel_view_key, start_time, now)
+        .ts_range(&target_count_key, start_time, now)
         .await
         .map_err(|err| {
-            tracing::error!("Error getting view count: {:?}", err);
+            tracing::error!("Error getting count for {}: {:?}", target_count_key, err);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "Failed to get view count" }).to_string(),
+                json!({ "error": "Failed to get count" }).to_string(),
             )
         })?;
 
-    let sorted_channels = get_sorted_top_channels(conn, time_range_key, top_channels_count).await?;
+    let sorted_targets = get_sorted_top_targets(conn, target_key_prefix, all_top_targets_key).await?;
 
-    let min_channel = sorted_channels
+    let min_target = sorted_targets
         .last()
         .map(|(name, count)| (name.clone(), *count))
         .unwrap_or(("".to_string(), 0));
 
-    let channel_exists = sorted_channels
+    let target_exists = sorted_targets
         .iter()
-        .any(|(name, _)| name == &channel_in_time_range_key);
+        .any(|(name, _)| name == &target_in_time_range_key);
 
-    if channel_exists {
-        delete_key(conn, &channel_in_time_range_key).await?;
+    if target_exists {
+        delete_key(conn, &target_in_time_range_key).await?;
     }
 
-    let should_add_channel = channel_exists
-        || sorted_channels.len() < top_channels_count
-        || data_points.len() > min_channel.1;
+    let should_add_target = target_exists
+        || sorted_targets.len() < top_targets_count
+        || data_points.len() > min_target.1;
 
-    if should_add_channel {
+    if should_add_target {
         for data_point in &data_points {
             let data_timestamp = data_point.0;
             let data_retention = data_timestamp + (retention * 1000) - now;
@@ -241,7 +250,7 @@ async fn process_time_range(
 
             add_time_series_data(
                 conn,
-                &channel_in_time_range_key,
+                &target_in_time_range_key,
                 data_timestamp,
                 data_view_count,
                 data_retention,
@@ -251,22 +260,21 @@ async fn process_time_range(
     }
 
     let should_delete =
-        (!channel_exists && should_add_channel) && sorted_channels.len() >= top_channels_count;
+        (!target_exists && should_add_target) && sorted_targets.len() >= top_targets_count;
 
     if should_delete {
-        delete_key(conn, &min_channel.0).await?;
+        delete_key(conn, &min_target.0).await?;
     }
 
     Ok(())
 }
 
-async fn check_channel_exists(
+async fn check_target_exists(
     conn: &mut PooledConnection<'_, RedisConnectionManager>,
-    channel: &str,
+    key: &str,
 ) -> Result<(), (StatusCode, String)> {
-    let channel_key = channel_key(channel);
-    let exists = conn.exists::<_, bool>(&channel_key).await.map_err(|err| {
-        tracing::error!("Error checking if channel exists: {:?}", err);
+    let exists = conn.exists::<_, bool>(&key).await.map_err(|err| {
+        tracing::error!("Error checking if target exists: {:?}", err);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({ "error": "Redis error while checking existence" }).to_string(),
@@ -274,10 +282,10 @@ async fn check_channel_exists(
     })?;
 
     if !exists {
-        tracing::warn!("Channel {} does not exist", channel);
+        tracing::warn!("Target {} does not exist", key);
         return Err((
             StatusCode::NOT_FOUND,
-            json!({ "error": "Channel does not exist" }).to_string(),
+            json!({ "error": "Target does not exist" }).to_string(),
         ));
     }
     Ok(())
@@ -285,7 +293,7 @@ async fn check_channel_exists(
 
 async fn check_rate_limit(
     conn: &mut PooledConnection<'_, RedisConnectionManager>,
-    user_view_key: &str,
+    rate_limit_key: &str,
     channel: &str,
 ) -> Result<(), (StatusCode, String)> {
     if cfg!(test) {
@@ -293,7 +301,7 @@ async fn check_rate_limit(
     }
 
     let ttl_seconds = 600; // 10 minutes in seconds
-    let set_result: bool = conn.set_nx(user_view_key, channel).await.map_err(|err| {
+    let set_result: bool = conn.set_nx(rate_limit_key, channel).await.map_err(|err| {
         tracing::error!("Error applying rate limit: {:?}", err);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -302,17 +310,16 @@ async fn check_rate_limit(
     })?;
 
     if !set_result {
-        tracing::info!("User already viewed channel within the last 10 minutes");
+        tracing::info!("User already viewed target within the last 10 minutes");
         return Err((
             StatusCode::BAD_REQUEST,
-            json!({ "error": "User already viewed channel within the last 10 minutes" })
+            json!({ "error": "User already viewed target within the last 10 minutes" })
                 .to_string(),
         ));
     }
 
-    // Add explicit type annotation for expire command
     let _: () = conn
-        .expire(user_view_key, ttl_seconds)
+        .expire(rate_limit_key, ttl_seconds)
         .await
         .map_err(|err| {
             tracing::error!("Error setting expiration: {:?}", err);
@@ -325,21 +332,18 @@ async fn check_rate_limit(
     Ok(())
 }
 
-async fn get_sorted_top_channels(
+async fn get_sorted_top_targets(
     conn: &mut PooledConnection<'_, RedisConnectionManager>,
-    time_range_key: &str,
-    _top_channels_count: usize,
+    target_key_prefix: &str,
+    all_top_targets_key: &str,
 ) -> Result<Vec<(String, usize)>, (StatusCode, String)> {
-    let mut channels_with_counts: HashMap<String, (usize, i64)> = HashMap::new();
+    let mut targets_with_counts: HashMap<String, (usize, i64)> = HashMap::new();
 
-    // Get all top channels for the time range
-    let all_top_channel_key = all_top_channel_key(time_range_key);
-
-    // Collect all keys
+    // Get all top targets for the time range
     let mut keys: Vec<String> = Vec::new();
     {
         let mut scan: AsyncIter<'_, String> =
-            conn.scan_match(&all_top_channel_key).await.map_err(|err| {
+            conn.scan_match(&all_top_targets_key).await.map_err(|err| {
                 tracing::error!("Failed to create Redis scan: {:?}", err);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -358,26 +362,26 @@ async fn get_sorted_top_channels(
             tracing::error!("Failed to get value for key {}: {:?}", key, err);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "Failed to get channel data" }).to_string(),
+                json!({ "error": "Failed to get target data" }).to_string(),
             )
         })?;
 
         if let Some((timestamp, count_str)) = value {
             let count = count_str.parse::<i64>().unwrap_or(0);
-            let channel_name = key.trim_start_matches("channel_views:").to_string();
-            channels_with_counts.insert(channel_name, (count as usize, timestamp));
+            let target_name = key.trim_start_matches(target_key_prefix).to_string();
+            targets_with_counts.insert(target_name, (count as usize, timestamp));
         }
     }
 
-    // Sort by view count (descending), then by timestamp (descending)
-    let mut sorted_channels: Vec<(String, usize, i64)> = channels_with_counts
+    // Sort by count (descending), then by timestamp (descending)
+    let mut sorted_targets: Vec<(String, usize, i64)> = targets_with_counts
         .into_iter()
-        .map(|(name, (views, timestamp))| (name, views, timestamp))
+        .map(|(name, (count, timestamp))| (name, count, timestamp))
         .collect();
-    sorted_channels.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.cmp(&a.2)));
+    sorted_targets.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.cmp(&a.2)));
 
-    Ok(sorted_channels
+    Ok(sorted_targets
         .into_iter()
-        .map(|(name, views, _)| (name, views))
+        .map(|(name, count, _)| (name, count))
         .collect())
 }
