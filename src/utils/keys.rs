@@ -19,41 +19,31 @@ pub fn address_key(address: &Address) -> String {
 }
 
 pub fn channel_key(channel: &str) -> String {
-    format!("{}:{}", CHANNEL_KEY, channel.to_ascii_lowercase())
+    format!("{}:{}", CHANNEL_KEY, channel).to_ascii_lowercase()
 }
 
 pub fn channel_view_key(channel: &str) -> String {
-    format!("{}:{}", CHANNEL_VIEW_KEY, channel.to_ascii_lowercase())
+    format!("{}:{}", CHANNEL_VIEW_KEY, channel).to_ascii_lowercase()
 }
 
 pub fn item_stream_key(item_caid: &str) -> String {
-    format!("{}:{}", ITEM_STREAM_KEY, item_caid.to_ascii_lowercase())
+    format!("{}:{}", ITEM_STREAM_KEY, item_caid).to_ascii_lowercase()
 }
 
 pub fn user_view_key(user: &str, channel: &str) -> String {
-    format!(
-        "{}:{}:{}",
-        USER_VIEW_KEY,
-        user.to_ascii_lowercase(),
-        channel.to_ascii_lowercase()
-    )
+    format!("{}:{}:{}", USER_VIEW_KEY, user, channel).to_ascii_lowercase()
 }
 
 pub fn user_stream_key(user: &str, item_caid: &str) -> String {
-    format!(
-        "{}:{}:{}",
-        USER_STREAM_KEY,
-        user.to_ascii_lowercase(),
-        item_caid.to_ascii_lowercase()
-    )
+    format!("{}:{}:{}", USER_STREAM_KEY, user, item_caid).to_ascii_lowercase()
 }
 
 pub fn top_channel_key(range: &str, channel: &str) -> String {
-    format!("{}:{}:{}", TOP_CHANNEL_KEY, range, channel)
+    format!("{}:{}:{}", TOP_CHANNEL_KEY, range, channel).to_ascii_lowercase()
 }
 
 pub fn all_top_channel_key(range: &str) -> String {
-    format!("{}:{}:*", TOP_CHANNEL_KEY, range)
+    format!("{}:{}:*", TOP_CHANNEL_KEY, range).to_ascii_lowercase()
 }
 
 pub fn nonce_key(address: &Address, chain_id: u64) -> String {

@@ -311,13 +311,16 @@ async fn check_rate_limit(
     }
 
     // Add explicit type annotation for expire command
-    let _: () = conn.expire(user_view_key, ttl_seconds).await.map_err(|err| {
-        tracing::error!("Error setting expiration: {:?}", err);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({ "error": "Redis error while setting expiration" }).to_string(),
-        )
-    })?;
+    let _: () = conn
+        .expire(user_view_key, ttl_seconds)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error setting expiration: {:?}", err);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "error": "Redis error while setting expiration" }).to_string(),
+            )
+        })?;
 
     Ok(())
 }
