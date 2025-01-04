@@ -3,10 +3,11 @@ use {
         routes::internal_error,
         utils::{
             keys::{
+                all_top_channel_key,
                 channel_key,
                 channel_view_key,
                 item_stream_key,
-                top_channels_key,
+                top_channel_key,
                 user_stream_key,
                 user_view_key,
             },
@@ -74,7 +75,6 @@ pub async fn log_channel_view(
     let channel = channel.to_ascii_lowercase();
     tracing::info!("Log channel view for channel {}", channel);
 
-    let channel_key = channel_key(&channel);
     let channel_view_key = channel_view_key(&channel);
     let user_view_key = user_view_key(&user, &channel);
     let now = chrono::Utc::now().timestamp_millis();
@@ -105,15 +105,16 @@ pub async fn log_channel_view(
         Err((status, message)) => return Err((status, message)),
     }
 
-    match increment_view_count(&mut conn, &channel_view_key, &channel, now).await {
+    match increment_ts_key(&mut conn, &channel_view_key, 1, Some(now)).await {
         Ok(_) => (),
         Err((status, message)) => return Err((status, message)),
     }
 
     for (time_range_key, retention) in time_ranges.iter() {
-        // Calculate total views for the current time range
+        let channel_in_time_range_key = top_channel_key(time_range_key, &channel);
         let start_time = now - (retention * 1000);
-        let _top_channels_key = top_channels_key(time_range_key);
+
+        // Get all views for the current channel for the current time range
         let view_count: Result<Vec<(i64, String)>, _> = redis::cmd("TS.RANGE")
             .arg(&channel_view_key)
             .arg(start_time)
@@ -130,48 +131,27 @@ pub async fn log_channel_view(
                     .last()
                     .map(|(name, count)| (name.clone(), *count))
                     .unwrap_or(("".to_string(), 0));
-                // tracing::info!("Min channel: {:?}", minChannel);
 
-                let current_channel_key = format!("top_channels:{}:{}", time_range_key, channel);
-                // check if the channel is already in the top channels
                 let channel_exists = sorted_channels
                     .iter()
-                    .any(|(name, _)| name == &current_channel_key);
-                // tracing::info!("Channel {} exists in top channels: {}", channel,
-                // channel_exists);
+                    .any(|(name, _)| name == &channel_in_time_range_key);
 
                 if channel_exists {
-                    // tracing::info!("Channel already exists in top channels");
-                    let _del_time_range_result: Result<(), _> = redis::cmd("DEL")
-                        .arg(&current_channel_key)
-                        .query_async(&mut *conn)
-                        .await;
+                    delete_key(&mut conn, &channel_in_time_range_key).await?;
                 }
 
                 let should_add_channel = channel_exists
                     || sorted_channels.len() < top_channels_count
                     || data_points.len() > min_channel.1;
-                tracing::info!(
-                    "Should add channel: {}, {}, {}, {}, {}, {}",
-                    should_add_channel,
-                    channel_exists,
-                    sorted_channels.len(),
-                    top_channels_count,
-                    data_points.len(),
-                    min_channel.1
-                );
+
                 if should_add_channel {
-                    // tracing::info!("Adding channel to top channels");
                     for data_point in &data_points {
                         let data_timestamp = data_point.0;
                         let data_retention = data_timestamp + (retention * 1000) - now;
                         let data_view_count = &data_point.1;
 
-                        // tracing::info!("Timestamp: {}, Retention: {}", dataTimestamp,
-                        // dataRetention);
-
                         let _add_result: Result<(), _> = redis::cmd("TS.ADD")
-                            .arg(&current_channel_key)
+                            .arg(&channel_in_time_range_key)
                             .arg(data_timestamp)
                             .arg(data_view_count)
                             .arg("RETENTION")
@@ -180,28 +160,14 @@ pub async fn log_channel_view(
                             .arg("LAST")
                             .query_async(&mut *conn)
                             .await;
-
-                        // tracing::info!("Add result: {:?}", addResult);
                     }
                 }
 
                 let should_delete = (!channel_exists && should_add_channel)
                     && sorted_channels.len() >= top_channels_count;
-                tracing::info!(
-                    "Should delete: {}, {}, {}, {}",
-                    should_delete,
-                    channel_exists,
-                    sorted_channels.len(),
-                    top_channels_count
-                );
-                if should_delete {
-                    let _del_time_range_result: Result<(), _> = redis::cmd("DEL")
-                        .arg(&min_channel.0)
-                        .query_async(&mut *conn)
-                        .await;
 
-                    // tracing::info!("Delete result: {:?}, {}",
-                    // delTimeRangeResult, minChannel.0);
+                if should_delete {
+                    delete_key(&mut conn, &min_channel.0).await?;
                 }
             }
             Err(err) => {
@@ -369,19 +335,19 @@ async fn check_rate_limit(
     Ok(())
 }
 
-async fn increment_view_count(
+async fn increment_ts_key(
     conn: &mut PooledConnection<'_, RedisConnectionManager>,
-    channel_view_key: &str,
-    channel: &str,
-    timestamp: i64,
+    key: &str,
+    increment: i64,
+    timestamp: Option<i64>,
 ) -> Result<(), (StatusCode, String)> {
-    conn.ts_incrby(channel_view_key, 1, Some(timestamp))
+    conn.ts_incrby(key, increment, timestamp)
         .await
         .map_err(|err| {
-            tracing::error!("Error logging channel view for {}: {:?}", channel, err);
+            tracing::error!("Error incrementing ts key for {}: {:?}", key, err);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "Redis error while logging channel view" }).to_string(),
+                json!({ "error": "Redis error while incrementing ts key" }).to_string(),
             )
         })
 }
@@ -394,7 +360,7 @@ async fn get_sorted_top_channels(
     let mut channels_with_counts: HashMap<String, (usize, i64)> = HashMap::new();
 
     // Get all top channels for the time range
-    let all_top_channel_key = format!("top_channels:{}:*", time_range_key);
+    let all_top_channel_key = all_top_channel_key(time_range_key);
     
     // Collect all keys
     let mut keys: Vec<String> = Vec::new();
@@ -439,4 +405,17 @@ async fn get_sorted_top_channels(
         .into_iter()
         .map(|(name, views, _)| (name, views))
         .collect())
+}
+
+async fn delete_key(
+    conn: &mut PooledConnection<'_, RedisConnectionManager>,
+    key: &str,
+) -> Result<(), (StatusCode, String)> {
+    conn.del(key).await.map_err(|err| {
+        tracing::error!("Error deleting key {}: {:?}", key, err);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": "Redis error while deleting key" }).to_string(),
+        )
+    })
 }
