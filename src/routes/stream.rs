@@ -24,7 +24,7 @@ use {
     },
     bb8::PooledConnection,
     bb8_redis::{
-        redis::{aio::ConnectionLike, AsyncCommands, Cmd, RedisError, RedisResult, AsyncIter},
+        redis::{aio::ConnectionLike, AsyncCommands, AsyncIter, Cmd, RedisError, RedisResult},
         RedisConnectionManager,
     },
     serde_json::json,
@@ -71,7 +71,6 @@ pub async fn log_channel_view(
     Path(channel): Path<String>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-
     // Extract user IP and normalize item ID
     let user = addr.ip().to_string();
     let channel = channel.to_ascii_lowercase();
@@ -113,7 +112,15 @@ pub async fn log_channel_view(
     increment_ts_key(&mut conn, &channel_view_key, 1, Some(now)).await?;
 
     for (time_range_key, retention) in time_ranges.iter() {
-        process_time_range(&mut conn, &channel, time_range_key, *retention, now, top_channels_count).await?;
+        process_time_range(
+            &mut conn,
+            &channel,
+            time_range_key,
+            *retention,
+            now,
+            top_channels_count,
+        )
+        .await?;
     }
 
     tracing::info!("Logged channel view");
@@ -242,8 +249,8 @@ async fn process_time_range(
         }
     }
 
-    let should_delete = (!channel_exists && should_add_channel)
-        && sorted_channels.len() >= top_channels_count;
+    let should_delete =
+        (!channel_exists && should_add_channel) && sorted_channels.len() >= top_channels_count;
 
     if should_delete {
         delete_key(conn, &min_channel.0).await?;
@@ -342,17 +349,18 @@ async fn get_sorted_top_channels(
 
     // Get all top channels for the time range
     let all_top_channel_key = all_top_channel_key(time_range_key);
-    
+
     // Collect all keys
     let mut keys: Vec<String> = Vec::new();
     {
-        let mut scan: AsyncIter<'_, String> = conn.scan_match(&all_top_channel_key).await.map_err(|err| {
-            tracing::error!("Failed to create Redis scan: {:?}", err);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "Failed to scan Redis keys" }).to_string(),
-            )
-        })?;
+        let mut scan: AsyncIter<'_, String> =
+            conn.scan_match(&all_top_channel_key).await.map_err(|err| {
+                tracing::error!("Failed to create Redis scan: {:?}", err);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    json!({ "error": "Failed to scan Redis keys" }).to_string(),
+                )
+            })?;
 
         while let Some(key) = scan.next_item().await {
             keys.push(key);
@@ -510,11 +518,6 @@ impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
         &'a mut self,
         key: &'a str,
     ) -> Pin<Box<dyn Future<Output = RedisResult<Option<(i64, String)>>> + Send + 'a>> {
-        Box::pin(async move {
-            redis::cmd("TS.GET")
-                .arg(key)
-                .query_async(self)
-                .await
-        })
+        Box::pin(async move { redis::cmd("TS.GET").arg(key).query_async(self).await })
     }
 }
