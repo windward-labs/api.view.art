@@ -294,14 +294,14 @@ async fn check_target_exists(
 async fn check_rate_limit(
     conn: &mut PooledConnection<'_, RedisConnectionManager>,
     rate_limit_key: &str,
-    channel: &str,
+    target: &str,
 ) -> Result<(), (StatusCode, String)> {
     if cfg!(test) {
         return Ok(()); // Skip rate limiting in tests
     }
 
     let ttl_seconds = 600; // 10 minutes in seconds
-    let set_result: bool = conn.set_nx(rate_limit_key, channel).await.map_err(|err| {
+    let set_result: bool = conn.set_nx(rate_limit_key, target).await.map_err(|err| {
         tracing::error!("Error applying rate limit: {:?}", err);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
