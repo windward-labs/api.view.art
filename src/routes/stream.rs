@@ -31,6 +31,10 @@ use {
     std::{collections::HashMap, future::Future, net::SocketAddr, pin::Pin},
 };
 
+type TSRangeResult<'a> = Pin<Box<dyn Future<Output = RedisResult<Vec<(i64, String)>>> + Send + 'a>>;
+type TSGetResult<'a> =
+    Pin<Box<dyn Future<Output = RedisResult<Option<(i64, String)>>> + Send + 'a>>;
+
 pub async fn get_channel_view_metrics(
     state: State<AppState>,
     Path(channel): Path<String>,
@@ -449,12 +453,9 @@ pub trait TimeSeriesCommands: Send {
         key: &'a str,
         start_time: i64,
         end_time: i64,
-    ) -> Pin<Box<dyn Future<Output = RedisResult<Vec<(i64, String)>>> + Send + 'a>>;
+    ) -> TSRangeResult<'a>;
 
-    fn ts_get<'a>(
-        &'a mut self,
-        key: &'a str,
-    ) -> Pin<Box<dyn Future<Output = RedisResult<Option<(i64, String)>>> + Send + 'a>>;
+    fn ts_get<'a>(&'a mut self, key: &'a str) -> TSGetResult<'a>;
 }
 
 impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
@@ -503,7 +504,7 @@ impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
         key: &'a str,
         start_time: i64,
         end_time: i64,
-    ) -> Pin<Box<dyn Future<Output = RedisResult<Vec<(i64, String)>>> + Send + 'a>> {
+    ) -> TSRangeResult<'a> {
         Box::pin(async move {
             redis::cmd("TS.RANGE")
                 .arg(key)
@@ -514,10 +515,7 @@ impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
         })
     }
 
-    fn ts_get<'a>(
-        &'a mut self,
-        key: &'a str,
-    ) -> Pin<Box<dyn Future<Output = RedisResult<Option<(i64, String)>>> + Send + 'a>> {
+    fn ts_get<'a>(&'a mut self, key: &'a str) -> TSGetResult<'a> {
         Box::pin(async move { redis::cmd("TS.GET").arg(key).query_async(self).await })
     }
 }
