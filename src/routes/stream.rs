@@ -12,7 +12,7 @@ use {
                 user_stream_key,
                 user_view_key,
             },
-            redis::{add_time_series_data, delete_key, increment_ts_key, TimeSeriesCommands},
+            redis::{delete, ts_add, ts_incrby, TimeSeriesCommands},
             stream_helpers::get_channel_lifetime_views,
         },
         AppState,
@@ -103,7 +103,7 @@ pub async fn log_channel_view(
     ];
 
     // Define the number of top channels to track
-    let top_channels_count = 30;
+    let top_channels_count = if cfg!(test) { 5 } else { 30 };
 
     // Check if the channel exists
     check_target_exists(&mut conn, &channel_key).await?;
@@ -112,7 +112,7 @@ pub async fn log_channel_view(
     check_rate_limit(&mut conn, &user_view_key, &channel).await?;
 
     // Increment the view count at the current timestamp
-    increment_ts_key(&mut conn, &channel_view_key, 1, Some(now)).await?;
+    ts_incrby(&mut conn, &channel_view_key, 1, Some(now)).await?;
 
     for (time_range_key, retention) in time_ranges.iter() {
         // Generate the Redis keys for the time range
@@ -171,13 +171,13 @@ pub async fn log_item_stream(
     ];
 
     // Define the number of top items to track
-    let top_items_count = 30;
+    let top_items_count = if cfg!(test) { 5 } else { 50 };
 
     // Check rate limit for the user and add rate limit key if not already set
     check_rate_limit(&mut conn, &user_stream_key, &item_id).await?;
 
     // Increment the stream count at the current timestamp
-    increment_ts_key(&mut conn, &item_stream_key, 1, Some(now)).await?;
+    ts_incrby(&mut conn, &item_stream_key, 1, Some(now)).await?;
 
     for (time_range_key, retention) in time_ranges.iter() {
         // Generate the Redis keys for the time range
@@ -246,7 +246,7 @@ async fn process_time_range(
         .any(|(name, _)| *name == params.target_in_time_range_key);
 
     if target_exists {
-        delete_key(conn, &params.target_in_time_range_key).await?;
+        delete(conn, &params.target_in_time_range_key).await?;
     }
 
     let should_add_target = target_exists
@@ -259,12 +259,12 @@ async fn process_time_range(
             let data_retention = data_timestamp + (params.retention * 1000) - params.now;
             let data_view_count = &data_point.1;
 
-            add_time_series_data(
+            ts_add(
                 conn,
                 &params.target_in_time_range_key,
                 data_timestamp,
                 data_view_count,
-                data_retention,
+                Some(data_retention),
             )
             .await?;
         }
@@ -274,7 +274,7 @@ async fn process_time_range(
         (!target_exists && should_add_target) && sorted_targets.len() >= params.top_targets_count;
 
     if should_delete {
-        delete_key(conn, &min_target.0).await?;
+        delete(conn, &min_target.0).await?;
     }
 
     Ok(())
@@ -296,7 +296,7 @@ async fn check_target_exists(
         tracing::warn!("Target {} does not exist", key);
         return Err((
             StatusCode::NOT_FOUND,
-            json!({ "error": "Target does not exist" }).to_string(),
+            json!({ "error": format!("Target {} does not exist", key) }).to_string(),
         ));
     }
     Ok(())
@@ -342,7 +342,7 @@ async fn check_rate_limit(
     Ok(())
 }
 
-async fn get_sorted_top_targets(
+pub async fn get_sorted_top_targets(
     conn: &mut PooledConnection<'_, RedisConnectionManager>,
     target_key_prefix: &str,
     all_top_targets_key: &str,
@@ -394,4 +394,334 @@ async fn get_sorted_top_targets(
         .into_iter()
         .map(|(name, count, _)| (name, count))
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[cfg(feature = "integration")]
+    mod integration {
+        use {
+            crate::{
+                routes::stream::{get_sorted_top_targets, log_channel_view},
+                utils::{
+                    keys::{all_top_channels_key, channel_view_key, top_channel_key},
+                    redis::{ts_add, ts_incrby, TimeSeriesCommands},
+                },
+                AppState,
+                Args,
+                Changes,
+                Keys,
+            },
+            alloy::providers::ProviderBuilder,
+            axum::{
+                extract::{ConnectInfo, Path, State},
+                http::StatusCode,
+            },
+            bb8_redis::{redis::AsyncCommands, RedisConnectionManager},
+            serial_test::serial,
+            std::ops::DerefMut,
+        };
+
+        struct TestContext {
+            pool: bb8::Pool<RedisConnectionManager>,
+        }
+
+        impl TestContext {
+            async fn new() -> Self {
+                let manager =
+                    RedisConnectionManager::new(format!("redis://localhost:6379/{}", 0)).unwrap();
+                let pool = bb8::Pool::builder()
+                    .max_size(2)
+                    .connection_timeout(std::time::Duration::from_secs(5))
+                    .build(manager)
+                    .await
+                    .unwrap();
+
+                Self { pool }
+            }
+
+            async fn cleanup(&self) -> Result<(), anyhow::Error> {
+                let mut conn = self.pool.get().await?;
+                let _: () = redis::cmd("FLUSHDB").query_async(conn.deref_mut()).await?;
+                Ok(())
+            }
+
+            async fn populate_channels(&self, count: u32) -> Result<(), (StatusCode, String)> {
+                let mut conn = self.pool.get().await.map_err(|err| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Redis connection error: {}", err),
+                    )
+                })?;
+
+                let now = chrono::Utc::now().timestamp_millis();
+
+                for i in 1..=count {
+                    let channel = format!("channel{}", i);
+                    let key = top_channel_key("daily", &channel);
+                    let value = format!("{}", i);
+                    ts_add(&mut conn, &key, now, &value, None).await?;
+                }
+
+                Ok(())
+            }
+
+            async fn create_channel_key(&self, channel: &str) -> Result<(), (StatusCode, String)> {
+                let mut conn = self.pool.get().await.map_err(|err| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Redis connection error: {}", err),
+                    )
+                })?;
+
+                let key = format!("channel:{}", channel);
+                conn.set(key, "test_channel").await?;
+                Ok(())
+            }
+
+            async fn ts_incrby(&self, key: &str, value: i64) -> Result<(), (StatusCode, String)> {
+                let mut conn = self.pool.get().await.map_err(|err| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Redis connection error: {}", err),
+                    )
+                })?;
+
+                ts_incrby(&mut conn, key, value, None).await?;
+                Ok(())
+            }
+
+            async fn ts_get(
+                &self,
+                key: &str,
+            ) -> Result<Option<(i64, String)>, (StatusCode, String)> {
+                let mut conn = self.pool.get().await.map_err(|err| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Redis connection error: {}", err),
+                    )
+                })?;
+
+                let value = conn.ts_get(key).await?;
+                Ok(value)
+            }
+
+            async fn get_sorted_targets(
+                &self,
+                prefix: &str,
+                pattern: &str,
+            ) -> Result<Vec<(String, usize)>, (StatusCode, String)> {
+                let mut conn = self.pool.get().await.map_err(|err| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Redis connection error: {}", err),
+                    )
+                })?;
+
+                get_sorted_top_targets(&mut conn, prefix, pattern).await
+            }
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+        #[serial]
+        async fn test_log_channel_view_new_channel() -> Result<(), anyhow::Error> {
+            // Create test context
+            let ctx = TestContext::new().await;
+
+            // Create test function arguments
+            let args = Args::load().await?;
+            let state = AppState {
+                pool: ctx.pool.clone(),
+                changes: Changes::new(),
+                keys: Keys::new(String::from(args.jwt_secret).as_bytes()),
+                provider: ProviderBuilder::new()
+                    .with_recommended_fillers()
+                    .on_http(String::from(args.base_rpc_url).parse()?),
+            };
+
+            let socket_addr: std::net::SocketAddr = "127.0.0.1:8000".parse()?;
+
+            // Populate channels
+            ctx.populate_channels(5).await.map_err(|err| {
+                anyhow::anyhow!("Failed to populate channels: {} - {}", err.0, err.1)
+            })?;
+
+            // Define new channel name
+            let channel = "test_new_channel";
+
+            // Create channel key
+            ctx.create_channel_key(channel).await.map_err(|err| {
+                anyhow::anyhow!("Failed to create channel key: {} - {}", err.0, err.1)
+            })?;
+
+            // Log channel view
+            log_channel_view(
+                State(state.clone()),
+                Path(channel.to_string()),
+                ConnectInfo(socket_addr),
+            )
+            .await;
+
+            // Check channel view count was incremented
+            let channel_view_key = channel_view_key(channel);
+            let channel_view_result = ctx.ts_get(&channel_view_key).await.unwrap();
+            let channel_view_count = channel_view_result.unwrap().1;
+            assert_eq!(channel_view_count, "1");
+
+            // Assert new channel is not in sorted targets since it was just created
+            let target_key_prefix = "channel_views:";
+            let all_top_channels_key = all_top_channels_key("daily");
+            let sorted_targets = ctx
+                .get_sorted_targets(&target_key_prefix, &all_top_channels_key)
+                .await
+                .unwrap();
+            assert!(
+                !sorted_targets.iter().any(|(name, _)| name == channel),
+                "Newly created channel should not be in sorted targets yet"
+            );
+
+            log_channel_view(
+                State(state),
+                Path(channel.to_string()),
+                ConnectInfo(socket_addr),
+            )
+            .await;
+
+            // Check channel view count was incremented
+            let channel_view_result = ctx.ts_get(&channel_view_key).await.unwrap();
+            let channel_view_count = channel_view_result.unwrap().1;
+            assert_eq!(channel_view_count, "2");
+
+            // Assert new channel is in sorted targets since it has enough views
+            let top_channel_key_added_channel = top_channel_key("daily", channel);
+            let sorted_targets = ctx
+                .get_sorted_targets(&target_key_prefix, &all_top_channels_key)
+                .await
+                .unwrap();
+            assert!(
+                sorted_targets
+                    .iter()
+                    .any(|(name, _)| name == &top_channel_key_added_channel),
+                "Newly created channel should be in sorted targets"
+            );
+
+            // Assert channel1 is not in sorted targets since it has been removed
+            // from the top channels
+            let top_channel_key_deleted_channel = top_channel_key("daily", "channel1");
+            let sorted_targets = ctx
+                .get_sorted_targets(&target_key_prefix, &all_top_channels_key)
+                .await
+                .unwrap();
+            assert!(
+                !sorted_targets
+                    .iter()
+                    .any(|(name, _)| name == &top_channel_key_deleted_channel),
+                "Channel1 should not be in sorted targets"
+            );
+
+            ctx.cleanup().await?;
+            Ok(())
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+        #[serial]
+        async fn test_log_channel_view_existing_channel() -> Result<(), anyhow::Error> {
+            // Create test context
+            let ctx = TestContext::new().await;
+
+            // Create test function arguments
+            let args = Args::load().await?;
+            let state = AppState {
+                pool: ctx.pool.clone(),
+                changes: Changes::new(),
+                keys: Keys::new(String::from(args.jwt_secret).as_bytes()),
+                provider: ProviderBuilder::new()
+                    .with_recommended_fillers()
+                    .on_http(String::from(args.base_rpc_url).parse()?),
+            };
+
+            let socket_addr: std::net::SocketAddr = "127.0.0.1:8000".parse()?;
+
+            // Populate channels
+            ctx.populate_channels(5).await.map_err(|err| {
+                anyhow::anyhow!("Failed to populate channels: {} - {}", err.0, err.1)
+            })?;
+
+            // Define existing channel name
+            let channel = "channel1";
+
+            // Define channel view key
+            let channel_view_key = channel_view_key(channel);
+
+            // Create channel key
+            ctx.create_channel_key(channel).await.map_err(|err| {
+                anyhow::anyhow!("Failed to create channel key: {} - {}", err.0, err.1)
+            })?;
+
+            // Set channel view count to 1
+            ctx.ts_incrby(&channel_view_key, 1).await.map_err(|err| {
+                anyhow::anyhow!(
+                    "Failed to increment channel view count: {} - {}",
+                    err.0,
+                    err.1
+                )
+            })?;
+
+            let target_key_prefix = "channel_views:";
+            let all_top_channels_key = all_top_channels_key("daily");
+
+            let original_sorted_targets = ctx
+                .get_sorted_targets(&target_key_prefix, &all_top_channels_key)
+                .await
+                .unwrap();
+            assert_eq!(original_sorted_targets.len(), 5);
+            assert_eq!(
+                original_sorted_targets,
+                vec![
+                    ("top_channels:daily:channel5".to_string(), 5),
+                    ("top_channels:daily:channel4".to_string(), 4),
+                    ("top_channels:daily:channel3".to_string(), 3),
+                    ("top_channels:daily:channel2".to_string(), 2),
+                    ("top_channels:daily:channel1".to_string(), 1),
+                ]
+            );
+
+            // Log channel view
+            log_channel_view(
+                State(state.clone()),
+                Path(channel.to_string()),
+                ConnectInfo(socket_addr),
+            )
+            .await;
+
+            // Check channel view count was incremented
+            let channel_view_result = ctx.ts_get(&channel_view_key).await.unwrap();
+            let channel_view_count = channel_view_result.unwrap().1;
+
+            // Assert channel view count was incremented
+            assert_eq!(channel_view_count, "2");
+
+            // Assert channel is in correct position in sorted targets
+            let updated_sorted_targets = ctx
+                .get_sorted_targets(&target_key_prefix, &all_top_channels_key)
+                .await
+                .unwrap();
+
+            assert_eq!(updated_sorted_targets.len(), 5);
+            assert_eq!(
+                updated_sorted_targets,
+                vec![
+                    ("top_channels:daily:channel5".to_string(), 5),
+                    ("top_channels:daily:channel4".to_string(), 4),
+                    ("top_channels:daily:channel3".to_string(), 3),
+                    ("top_channels:daily:channel1".to_string(), 2),
+                    ("top_channels:daily:channel2".to_string(), 2),
+                ]
+            );
+
+            ctx.cleanup().await?;
+            Ok(())
+        }
+    }
 }

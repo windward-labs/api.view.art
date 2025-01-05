@@ -13,7 +13,7 @@ type TSRangeResult<'a> = Pin<Box<dyn Future<Output = RedisResult<Vec<(i64, Strin
 type TSGetResult<'a> =
     Pin<Box<dyn Future<Output = RedisResult<Option<(i64, String)>>> + Send + 'a>>;
 
-pub async fn increment_ts_key(
+pub async fn ts_incrby(
     conn: &mut PooledConnection<'_, RedisConnectionManager>,
     key: &str,
     increment: i64,
@@ -30,25 +30,12 @@ pub async fn increment_ts_key(
         })
 }
 
-pub async fn delete_key(
-    conn: &mut PooledConnection<'_, RedisConnectionManager>,
-    key: &str,
-) -> Result<(), (StatusCode, String)> {
-    conn.del(key).await.map_err(|err| {
-        tracing::error!("Error deleting key {}: {:?}", key, err);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({ "error": "Redis error while deleting key" }).to_string(),
-        )
-    })
-}
-
-pub async fn add_time_series_data(
+pub async fn ts_add(
     conn: &mut PooledConnection<'_, RedisConnectionManager>,
     key: &str,
     timestamp: i64,
     value: &str,
-    retention: i64,
+    retention: Option<i64>,
 ) -> Result<(), (StatusCode, String)> {
     conn.ts_add(key, timestamp, value, retention)
         .await
@@ -61,7 +48,21 @@ pub async fn add_time_series_data(
         })
 }
 
+pub async fn delete(
+    conn: &mut PooledConnection<'_, RedisConnectionManager>,
+    key: &str,
+) -> Result<(), (StatusCode, String)> {
+    conn.del(key).await.map_err(|err| {
+        tracing::error!("Error deleting key {}: {:?}", key, err);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": "Redis error while deleting key" }).to_string(),
+        )
+    })
+}
+
 pub trait TimeSeriesCommands: Send {
+
     fn ts_incrby<'a>(
         &'a mut self,
         key: &'a str,
@@ -74,7 +75,7 @@ pub trait TimeSeriesCommands: Send {
         key: &'a str,
         timestamp: i64,
         value: &'a str,
-        retention: i64,
+        retention: Option<i64>,
     ) -> Pin<Box<dyn Future<Output = RedisResult<()>> + Send + 'a>>;
 
     fn ts_range<'a>(
@@ -88,6 +89,7 @@ pub trait TimeSeriesCommands: Send {
 }
 
 impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
+
     fn ts_incrby<'a>(
         &'a mut self,
         key: &'a str,
@@ -111,19 +113,17 @@ impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
         key: &'a str,
         timestamp: i64,
         value: &'a str,
-        retention: i64,
+        retention: Option<i64>,
     ) -> Pin<Box<dyn Future<Output = RedisResult<()>> + Send + 'a>> {
         Box::pin(async move {
             let mut cmd = Cmd::new();
-            cmd.arg("TS.ADD")
-                .arg(key)
-                .arg(timestamp)
-                .arg(value)
-                .arg("RETENTION")
-                .arg(retention)
-                .arg("ON_DUPLICATE")
-                .arg("LAST");
+            cmd.arg("TS.ADD").arg(key).arg(timestamp).arg(value);
 
+            if let Some(retention_value) = retention {
+                cmd.arg("RETENTION").arg(retention_value);
+            }
+
+            cmd.arg("ON_DUPLICATE").arg("LAST");
             cmd.query_async(self).await
         })
     }
