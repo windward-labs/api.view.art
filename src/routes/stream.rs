@@ -37,20 +37,19 @@ pub async fn get_channel_view_metrics(
     Path(channel): Path<String>,
 ) -> impl IntoResponse {
     let channel = channel.to_ascii_lowercase();
-    tracing::info!("Fetching all-time views for channel {}", channel);
+    tracing::info!("Fetching all-time views for channel {channel}");
 
     match state.pool.get().await {
         Ok(mut conn) => match get_channel_lifetime_views(&mut conn, &channel).await {
             Ok(total_views) => (
                 StatusCode::OK,
-                Json(json!({ "channel": channel, "total_views": total_views })),
+                Json(json!({
+                    "channel": channel,
+                    "total_views": total_views
+                })),
             ),
             Err(err) => {
-                tracing::error!(
-                    "Error getting total views for channel {}: {:?}",
-                    channel,
-                    err
-                );
+                tracing::error!("Error getting total views for channel {channel}: {err:?}");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({ "error": "Failed to fetch total views" })),
@@ -58,7 +57,7 @@ pub async fn get_channel_view_metrics(
             }
         },
         Err(err) => {
-            tracing::error!("Error getting connection from pool: {:?}", err);
+            tracing::error!("Error getting connection from pool: {err:?}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": "Failed to connect to Redis" })),
@@ -75,7 +74,7 @@ pub async fn log_channel_view(
     // Extract user IP and normalize item ID
     let user = addr.ip().to_string();
     let channel = channel.to_ascii_lowercase();
-    tracing::info!("Log channel view for channel {}", channel);
+    tracing::info!("Log channel view for channel {channel}");
 
     // Generate Redis keys
     let channel_key = channel_key(&channel);
@@ -95,6 +94,7 @@ pub async fn log_channel_view(
         )
     })?;
 
+    // Define the number of top channels to track
     // Define time ranges for top channels
     let time_ranges: Vec<(&str, i64)> = vec![
         ("daily", 24 * 60 * 60),        // 24 hours
@@ -102,7 +102,6 @@ pub async fn log_channel_view(
         ("monthly", 30 * 24 * 60 * 60), // 30 days
     ];
 
-    // Define the number of top channels to track
     let top_channels_count = if cfg!(test) { 5 } else { 30 };
 
     // Check if the channel exists
@@ -144,7 +143,7 @@ pub async fn log_item_stream(
     // Extract user IP and normalize item ID
     let user = addr.ip().to_string();
     let item_id = item_id.to_ascii_lowercase();
-    tracing::info!("Log item stream for item with id {}", item_id);
+    tracing::info!("Log item stream for item with id {item_id}");
 
     // Generate Redis keys
     let item_stream_key = item_stream_key(&item_id);
@@ -287,19 +286,20 @@ async fn check_target_exists<T>(
 where
     T: AsRef<str>,
 {
-    let exists = conn.exists::<_, bool>(key.as_ref()).await.map_err(|err| {
-        tracing::error!("Error checking if target exists: {:?}", err);
+    let key_ref = key.as_ref();
+    let exists = conn.exists::<_, bool>(key_ref).await.map_err(|err| {
+        tracing::error!("Error checking if target exists: {err:?}");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            json!({ "error": "Redis error while checking existence" }).to_string(),
+            "Redis error while checking existence".to_string(),
         )
     })?;
 
     if !exists {
-        tracing::warn!("Target {} does not exist", key.as_ref());
+        tracing::warn!("Target {key_ref} does not exist");
         return Err((
             StatusCode::NOT_FOUND,
-            json!({ "error": format!("Target {} does not exist", key.as_ref()) }).to_string(),
+            format!("Target {key_ref} does not exist"),
         ));
     }
     Ok(())
