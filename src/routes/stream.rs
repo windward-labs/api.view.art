@@ -280,11 +280,14 @@ async fn process_time_range(
     Ok(())
 }
 
-async fn check_target_exists(
+async fn check_target_exists<T>(
     conn: &mut PooledConnection<'_, RedisConnectionManager>,
-    key: &str,
-) -> Result<(), (StatusCode, String)> {
-    let exists = conn.exists::<_, bool>(&key).await.map_err(|err| {
+    key: T,
+) -> Result<(), (StatusCode, String)>
+where
+    T: AsRef<str>,
+{
+    let exists = conn.exists::<_, bool>(key.as_ref()).await.map_err(|err| {
         tracing::error!("Error checking if target exists: {:?}", err);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -293,32 +296,39 @@ async fn check_target_exists(
     })?;
 
     if !exists {
-        tracing::warn!("Target {} does not exist", key);
+        tracing::warn!("Target {} does not exist", key.as_ref());
         return Err((
             StatusCode::NOT_FOUND,
-            json!({ "error": format!("Target {} does not exist", key) }).to_string(),
+            json!({ "error": format!("Target {} does not exist", key.as_ref()) }).to_string(),
         ));
     }
     Ok(())
 }
 
-async fn check_rate_limit(
+async fn check_rate_limit<T, U>(
     conn: &mut PooledConnection<'_, RedisConnectionManager>,
-    rate_limit_key: &str,
-    target: &str,
-) -> Result<(), (StatusCode, String)> {
+    rate_limit_key: T,
+    target: U,
+) -> Result<(), (StatusCode, String)>
+where
+    T: AsRef<str>,
+    U: AsRef<str>,
+{
     if cfg!(test) {
         return Ok(()); // Skip rate limiting in tests
     }
 
     let ttl_seconds = 600; // 10 minutes in seconds
-    let set_result: bool = conn.set_nx(rate_limit_key, target).await.map_err(|err| {
-        tracing::error!("Error applying rate limit: {:?}", err);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({ "error": "Redis error while applying rate limit" }).to_string(),
-        )
-    })?;
+    let set_result: bool = conn
+        .set_nx(rate_limit_key.as_ref(), target.as_ref())
+        .await
+        .map_err(|err| {
+            tracing::error!("Error applying rate limit: {:?}", err);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "error": "Redis error while applying rate limit" }).to_string(),
+            )
+        })?;
 
     if !set_result {
         tracing::info!("User already viewed target within the last 10 minutes");
@@ -329,7 +339,7 @@ async fn check_rate_limit(
     }
 
     let _: () = conn
-        .expire(rate_limit_key, ttl_seconds)
+        .expire(rate_limit_key.as_ref(), ttl_seconds)
         .await
         .map_err(|err| {
             tracing::error!("Error setting expiration: {:?}", err);
