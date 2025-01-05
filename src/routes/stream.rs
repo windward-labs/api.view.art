@@ -342,24 +342,30 @@ async fn check_rate_limit(
     Ok(())
 }
 
-pub async fn get_sorted_top_targets(
+pub async fn get_sorted_top_targets<T, U>(
     conn: &mut PooledConnection<'_, RedisConnectionManager>,
-    target_key_prefix: &str,
-    all_top_targets_key: &str,
-) -> Result<Vec<(String, usize)>, (StatusCode, String)> {
+    target_key_prefix: T,
+    all_top_targets_key: U,
+) -> Result<Vec<(String, usize)>, (StatusCode, String)>
+where
+    T: AsRef<str>,
+    U: AsRef<str>,
+{
     let mut targets_with_counts: HashMap<String, (usize, i64)> = HashMap::new();
-
-    // Get all top targets for the time range
     let mut keys: Vec<String> = Vec::new();
+
     {
-        let mut scan: AsyncIter<'_, String> =
-            conn.scan_match(all_top_targets_key).await.map_err(|err| {
-                tracing::error!("Failed to create Redis scan: {:?}", err);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to scan Redis keys" }).to_string(),
-                )
-            })?;
+        // Get all top targets for the time range
+        let mut scan: AsyncIter<'_, String> = conn
+            .scan_match(all_top_targets_key.as_ref())
+            .await
+            .map_err(|err| {
+            tracing::error!("Failed to create Redis scan: {:?}", err);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "error": "Failed to scan Redis keys" }).to_string(),
+            )
+        })?;
 
         while let Some(key) = scan.next_item().await {
             keys.push(key);
@@ -378,7 +384,9 @@ pub async fn get_sorted_top_targets(
 
         if let Some((timestamp, count_str)) = value {
             let count = count_str.parse::<i64>().unwrap_or(0);
-            let target_name = key.trim_start_matches(target_key_prefix).to_string();
+            let target_name = key
+                .trim_start_matches(target_key_prefix.as_ref())
+                .to_string();
             targets_with_counts.insert(target_name, (count as usize, timestamp));
         }
     }
