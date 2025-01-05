@@ -476,7 +476,12 @@ mod tests {
                 })?;
 
                 let key = format!("channel:{}", channel);
-                conn.set(key, "test_channel").await?;
+                conn.set(key, "test_channel").await.map_err(|err| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Redis error: {}", err),
+                    )
+                })?;
                 Ok(())
             }
 
@@ -503,8 +508,12 @@ mod tests {
                     )
                 })?;
 
-                let value = conn.ts_get(key).await?;
-                Ok(value)
+                conn.ts_get(key).await.map_err(|err| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Redis error: {}", err),
+                    )
+                })
             }
 
             async fn get_sorted_targets(
@@ -556,7 +565,7 @@ mod tests {
             })?;
 
             // Log channel view
-            log_channel_view(
+            let _ = log_channel_view(
                 State(state.clone()),
                 Path(channel.to_string()),
                 ConnectInfo(socket_addr),
@@ -581,7 +590,7 @@ mod tests {
                 "Newly created channel should not be in sorted targets yet"
             );
 
-            log_channel_view(
+            let _ = log_channel_view(
                 State(state),
                 Path(channel.to_string()),
                 ConnectInfo(socket_addr),
@@ -688,7 +697,7 @@ mod tests {
             );
 
             // Log channel view
-            log_channel_view(
+            let _ = log_channel_view(
                 State(state.clone()),
                 Path(channel.to_string()),
                 ConnectInfo(socket_addr),

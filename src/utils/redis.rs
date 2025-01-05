@@ -62,7 +62,6 @@ pub async fn delete(
 }
 
 pub trait TimeSeriesCommands: Send {
-
     fn ts_incrby<'a>(
         &'a mut self,
         key: &'a str,
@@ -89,7 +88,6 @@ pub trait TimeSeriesCommands: Send {
 }
 
 impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
-
     fn ts_incrby<'a>(
         &'a mut self,
         key: &'a str,
