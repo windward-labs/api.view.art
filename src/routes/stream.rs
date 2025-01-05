@@ -476,7 +476,7 @@ mod tests {
                 })?;
 
                 let key = format!("channel:{}", channel);
-                conn.set(key, "test_channel").await.map_err(|err| {
+                let _: () = conn.set(key, "test_channel").await.map_err(|err| {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         format!("Redis error: {}", err),
@@ -582,7 +582,7 @@ mod tests {
             let target_key_prefix = "channel_views:";
             let all_top_channels_key = all_top_channels_key("daily");
             let sorted_targets = ctx
-                .get_sorted_targets(&target_key_prefix, &all_top_channels_key)
+                .get_sorted_targets(target_key_prefix, &all_top_channels_key)
                 .await
                 .unwrap();
             assert!(
@@ -605,7 +605,7 @@ mod tests {
             // Assert new channel is in sorted targets since it has enough views
             let top_channel_key_added_channel = top_channel_key("daily", channel);
             let sorted_targets = ctx
-                .get_sorted_targets(&target_key_prefix, &all_top_channels_key)
+                .get_sorted_targets(target_key_prefix, &all_top_channels_key)
                 .await
                 .unwrap();
             assert!(
@@ -619,7 +619,7 @@ mod tests {
             // from the top channels
             let top_channel_key_deleted_channel = top_channel_key("daily", "channel1");
             let sorted_targets = ctx
-                .get_sorted_targets(&target_key_prefix, &all_top_channels_key)
+                .get_sorted_targets(target_key_prefix, &all_top_channels_key)
                 .await
                 .unwrap();
             assert!(
@@ -681,7 +681,7 @@ mod tests {
             let all_top_channels_key = all_top_channels_key("daily");
 
             let original_sorted_targets = ctx
-                .get_sorted_targets(&target_key_prefix, &all_top_channels_key)
+                .get_sorted_targets(target_key_prefix, &all_top_channels_key)
                 .await
                 .unwrap();
             assert_eq!(original_sorted_targets.len(), 5);
@@ -713,7 +713,7 @@ mod tests {
 
             // Assert channel is in correct position in sorted targets
             let updated_sorted_targets = ctx
-                .get_sorted_targets(&target_key_prefix, &all_top_channels_key)
+                .get_sorted_targets(target_key_prefix, &all_top_channels_key)
                 .await
                 .unwrap();
 
