@@ -36,7 +36,7 @@ pub struct Item {
     pub apply_matte: bool,
     pub activate_by: String,
     pub predominant_color: Option<String>,
-    #[serde(default)]
+    #[serde(default = "default_cache_enabled")]
     pub cache_enabled: bool,
 }
 
@@ -184,6 +184,11 @@ pub struct Played {
 // Function to provide the default value for item rotation angle
 fn default_item_rotation_angle() -> u32 {
     0
+}
+
+// Add this function near the other default functions (e.g., near default_item_rotation_angle)
+fn default_cache_enabled() -> bool {
+    true
 }
 
 // EmptyChannelContent
