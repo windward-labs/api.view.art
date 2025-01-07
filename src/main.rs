@@ -303,6 +303,7 @@ mod tests {
                                         apply_matte: false,
                                         activate_by: "".to_string(),
                                         predominant_color: None,
+                                        cache_enabled: false,
                                     }],
                                     description: "test description".to_string(),
                                     display: Display {
@@ -340,6 +341,7 @@ mod tests {
                                         apply_matte: false,
                                         activate_by: "".to_string(),
                                         predominant_color: None,
+                                        cache_enabled: false,
                                     }],
                                     description: "test description".to_string(),
                                     display: Display {
@@ -436,6 +438,7 @@ mod tests {
                                         apply_matte: false,
                                         activate_by: "".to_string(),
                                         predominant_color: None,
+                                        cache_enabled: false,
                                     }],
                                     description: "test description".to_string(),
                                     display: Display {
@@ -469,6 +472,7 @@ mod tests {
                             {
                                 assert!(items.len() == 1);
                                 assert!(items[0].id == "eip155:1/erc721:0x06012c8cf97BEaD5deAe237070F9587f8E7A266d/771769".parse::<AssetId>().unwrap());
+                                assert!(!items[0].cache_enabled);
                                 assert!(description == "test description");
                                 assert!(display.item_duration == 60);
                                 assert!(display.background_color == *"#ffffff".to_string());
@@ -572,6 +576,7 @@ Issued At: {}"#,
                     apply_matte: false,
                     activate_by: "".to_string(),
                     predominant_color: None,
+                    cache_enabled: false,
                 }],
                 description: "test description".to_string(),
                 display: Display {
@@ -611,6 +616,7 @@ Issued At: {}"#,
                     apply_matte: false,
                     activate_by: "".to_string(),
                     predominant_color: None,
+                    cache_enabled: false,
                 }],
                 description: "test description".to_string(),
                 display: Display {
@@ -697,6 +703,7 @@ Issued At: {}"#,
                     apply_matte: false,
                     activate_by: "".to_string(),
                     predominant_color: None,
+                    cache_enabled: false,
                 }],
                 display: Display {
                     item_duration: 60,
