@@ -36,6 +36,8 @@ pub struct Item {
     pub apply_matte: bool,
     pub activate_by: String,
     pub predominant_color: Option<String>,
+    #[serde(default)]
+    pub cache_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
