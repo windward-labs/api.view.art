@@ -298,11 +298,13 @@ mod tests {
                                         artist: Some("test".to_string()),
                                         url: Url::parse("https://test.com").unwrap(),
                                         thumbnail_url: Url::parse("https://test.com").unwrap(),
+                                        external_url: Some(Url::parse("https://test.com").unwrap()),
                                         rotation_angle: 0,
                                         apply_matte: false,
                                         activate_by: "".to_string(),
                                         predominant_color: None,
                                     }],
+                                    description: "test description".to_string(),
                                     display: Display {
                                         item_duration: 60,
                                         background_color: "#ffffff".to_string(),
@@ -333,11 +335,13 @@ mod tests {
                                         artist: Some("test".to_string()),
                                         url: Url::parse("https://test.com").unwrap(),
                                         thumbnail_url: Url::parse("https://test.com").unwrap(),
+                                        external_url: Some(Url::parse("https://test.com").unwrap()),
                                         rotation_angle: 0,
                                         apply_matte: false,
                                         activate_by: "".to_string(),
                                         predominant_color: None,
                                     }],
+                                    description: "test description".to_string(),
                                     display: Display {
                                         item_duration: 60,
                                         background_color: "#ffffff".to_string(),
@@ -362,6 +366,7 @@ mod tests {
                             if let ChannelContent::ChannelContentV4 {
                                 items,
                                 display,
+                                description,
                                 shared_with,
                                 status,
                             } = content
@@ -370,6 +375,7 @@ mod tests {
                                 assert!(items[0].id == "eip155:1/erc721:0x06012c8cf97BEaD5deAe237070F9587f8E7A266d/771769"
                                     .parse::<AssetId>()
                                     .unwrap());
+                                assert!(description == "test description");
                                 assert!(display.item_duration == 60);
                                 assert!(display.background_color == *"#ffffff".to_string());
                                 assert!(!display.show_attribution);
@@ -425,11 +431,13 @@ mod tests {
                                         artist: Some("test".to_string()),
                                         url: Url::parse("https://test.com").unwrap(),
                                         thumbnail_url: Url::parse("https://test.com").unwrap(),
+                                        external_url: Some(Url::parse("https://test.com").unwrap()),
                                         rotation_angle: 0,
                                         apply_matte: false,
                                         activate_by: "".to_string(),
                                         predominant_color: None,
                                     }],
+                                    description: "test description".to_string(),
                                     display: Display {
                                         item_duration: 60,
                                         background_color: "#ffffff".to_string(),
@@ -454,12 +462,14 @@ mod tests {
                             if let ChannelContent::ChannelContentV4 {
                                 items,
                                 display,
+                                description,
                                 shared_with,
                                 status,
                             } = content
                             {
                                 assert!(items.len() == 1);
                                 assert!(items[0].id == "eip155:1/erc721:0x06012c8cf97BEaD5deAe237070F9587f8E7A266d/771769".parse::<AssetId>().unwrap());
+                                assert!(description == "test description");
                                 assert!(display.item_duration == 60);
                                 assert!(display.background_color == *"#ffffff".to_string());
                                 assert!(!display.show_attribution);
@@ -557,11 +567,13 @@ Issued At: {}"#,
                     artist: Some("test".to_string()),
                     url: Url::parse("https://test.com").unwrap(),
                     thumbnail_url: Url::parse("https://test.com").unwrap(),
+                    external_url: Some(Url::parse("https://test.com").unwrap()),
                     rotation_angle: 0,
                     apply_matte: false,
                     activate_by: "".to_string(),
                     predominant_color: None,
                 }],
+                description: "test description".to_string(),
                 display: Display {
                     item_duration: 60,
                     background_color: "#ffffff".to_string(),
@@ -594,11 +606,13 @@ Issued At: {}"#,
                     artist: Some("test".to_string()),
                     url: Url::parse("https://test.com").unwrap(),
                     thumbnail_url: Url::parse("https://test.com").unwrap(),
+                    external_url: Some(Url::parse("https://test.com").unwrap()),
                     rotation_angle: 0,
                     apply_matte: false,
                     activate_by: "".to_string(),
                     predominant_color: None,
                 }],
+                description: "test description".to_string(),
                 display: Display {
                     item_duration: 60,
                     background_color: "#ffffff".to_string(),
@@ -678,6 +692,7 @@ Issued At: {}"#,
                     artist: Some("test".to_string()),
                     url: Url::parse("https://test.com").unwrap(),
                     thumbnail_url: Url::parse("https://test.com").unwrap(),
+                    external_url: Some(Url::parse("https://test.com").unwrap()),
                     rotation_angle: 0,
                     apply_matte: false,
                     activate_by: "".to_string(),

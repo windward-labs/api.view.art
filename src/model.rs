@@ -29,6 +29,8 @@ pub struct Item {
     pub artist: Option<String>,
     pub url: Url,
     pub thumbnail_url: Url,
+    #[serde(default)]
+    pub external_url: Option<Url>,
     #[serde(default = "default_item_rotation_angle")]
     pub rotation_angle: u32,
     pub apply_matte: bool,
@@ -42,6 +44,8 @@ pub struct Item {
 pub enum ChannelContent {
     ChannelContentV4 {
         items: Vec<Item>,
+        #[serde(default)]
+        description: String,
         #[serde(default = "default_display")]
         display: Display,
         #[serde(default = "default_shared_with")]
@@ -108,6 +112,7 @@ impl ChannelContent {
                 status,
             } => ChannelContent::ChannelContentV4 {
                 items,
+                description: String::new(),
                 display,
                 shared_with: default_shared_with(),
                 status,
@@ -227,6 +232,7 @@ mod tests {
     #[serde(rename_all = "camelCase")]
     struct ChannelContentV4Test {
         items: Vec<Item>,
+        description: String,
         display: Display,
         shared_with: Vec<Address>,
         status: Status,

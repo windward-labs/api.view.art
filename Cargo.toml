@@ -51,3 +51,7 @@ erc6492 = { git = "https://github.com/devanoneth/erc6492" }
 [dev-dependencies]
 eventsource-stream = "0.2"
 test-log = { version = "0.2.16", features = ["trace"] }
+serial_test = "2.0"
+
+[features]
+integration = []

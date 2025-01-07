@@ -43,7 +43,20 @@ pub struct Args {
 
 impl Args {
     pub async fn load() -> Result<Self> {
-        let _ = dotenvy::dotenv().map_err(|err| tracing::error!("dotenvy error: {err}"));
-        Ok(Self::parse())
+        if cfg!(test) {
+            Ok(Self {
+                port: 3000,
+                rediscloud_url: "redis://localhost:6379".parse()?,
+                base_rpc_url: "http://localhost:8545".parse()?,
+                jwt_secret: "test_secret".parse()?,
+                privy_app_id: "test_app_id".parse()?,
+                privy_app_secret: "test_app_secret".parse()?,
+                privy_public_key: "test_public_key".parse()?,
+                allowed_origins: None,
+            })
+        } else {
+            let _ = dotenvy::dotenv().map_err(|err| tracing::error!("dotenvy error: {err}"));
+            Ok(Self::parse())
+        }
     }
 }
