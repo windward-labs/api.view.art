@@ -181,12 +181,10 @@ pub struct Played {
 
 // Item
 
-// Function to provide the default value for item rotation angle
 fn default_item_rotation_angle() -> u32 {
     0
 }
 
-// Add this function near the other default functions (e.g., near default_item_rotation_angle)
 fn default_cache_enabled() -> bool {
     true
 }
