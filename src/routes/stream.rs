@@ -97,12 +97,12 @@ pub async fn log_channel_view(
     // Define the number of top channels to track
     // Define time ranges for top channels
     let time_ranges: Vec<(&str, i64)> = vec![
-        ("daily", 24 * 60 * 60),        // 24 hours
+        // ("daily", 24 * 60 * 60),        // 24 hours
         ("weekly", 7 * 24 * 60 * 60),   // 7 days
-        ("monthly", 30 * 24 * 60 * 60), // 30 days
+        // ("monthly", 30 * 24 * 60 * 60), // 30 days
     ];
 
-    let top_channels_count = if cfg!(test) { 5 } else { 30 };
+    let top_channels_count = if cfg!(test) { 5 } else { 15 };
 
     // Check if the channel exists
     check_target_exists(&mut conn, &channel_key).await?;
@@ -164,13 +164,13 @@ pub async fn log_item_stream(
 
     // Define time ranges for top items
     let time_ranges: Vec<(&str, i64)> = vec![
-        ("daily", 24 * 60 * 60),        // 24 hours
+        // ("daily", 24 * 60 * 60),        // 24 hours
         ("weekly", 7 * 24 * 60 * 60),   // 7 days
-        ("monthly", 30 * 24 * 60 * 60), // 30 days
+        // ("monthly", 30 * 24 * 60 * 60), // 30 days
     ];
 
     // Define the number of top items to track
-    let top_items_count = if cfg!(test) { 5 } else { 50 };
+    let top_items_count = if cfg!(test) { 5 } else { 30 };
 
     // Check rate limit for the user and add rate limit key if not already set
     check_rate_limit(&mut conn, &user_stream_key, &item_id).await?;
