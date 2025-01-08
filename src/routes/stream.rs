@@ -97,12 +97,12 @@ pub async fn log_channel_view(
     // Define the number of top channels to track
     // Define time ranges for top channels
     let time_ranges: Vec<(&str, i64)> = vec![
-        ("daily", 24 * 60 * 60),        // 24 hours
+        // ("daily", 24 * 60 * 60),        // 24 hours
         ("weekly", 7 * 24 * 60 * 60),   // 7 days
-        ("monthly", 30 * 24 * 60 * 60), // 30 days
+        // ("monthly", 30 * 24 * 60 * 60), // 30 days
     ];
 
-    let top_channels_count = if cfg!(test) { 5 } else { 30 };
+    let top_channels_count = if cfg!(test) { 5 } else { 15 };
 
     // Check if the channel exists
     check_target_exists(&mut conn, &channel_key).await?;
@@ -164,13 +164,13 @@ pub async fn log_item_stream(
 
     // Define time ranges for top items
     let time_ranges: Vec<(&str, i64)> = vec![
-        ("daily", 24 * 60 * 60),        // 24 hours
+        // ("daily", 24 * 60 * 60),        // 24 hours
         ("weekly", 7 * 24 * 60 * 60),   // 7 days
-        ("monthly", 30 * 24 * 60 * 60), // 30 days
+        // ("monthly", 30 * 24 * 60 * 60), // 30 days
     ];
 
     // Define the number of top items to track
-    let top_items_count = if cfg!(test) { 5 } else { 50 };
+    let top_items_count = if cfg!(test) { 5 } else { 30 };
 
     // Check rate limit for the user and add rate limit key if not already set
     check_rate_limit(&mut conn, &user_stream_key, &item_id).await?;
@@ -477,7 +477,7 @@ mod tests {
 
                 for i in 1..=count {
                     let channel = format!("channel{}", i);
-                    let key = top_channel_key("daily", &channel);
+                    let key = top_channel_key("weekly", &channel);
                     let value = format!("{}", i);
                     ts_add(&mut conn, &key, now, &value, None).await?;
                 }
@@ -598,7 +598,7 @@ mod tests {
 
             // Assert new channel is not in sorted targets since it was just created
             let target_key_prefix = "channel_views:";
-            let all_top_channels_key = all_top_channels_key("daily");
+            let all_top_channels_key = all_top_channels_key("weekly");
             let sorted_targets = ctx
                 .get_sorted_targets(target_key_prefix, &all_top_channels_key)
                 .await
@@ -621,7 +621,7 @@ mod tests {
             assert_eq!(channel_view_count, "2");
 
             // Assert new channel is in sorted targets since it has enough views
-            let top_channel_key_added_channel = top_channel_key("daily", channel);
+            let top_channel_key_added_channel = top_channel_key("weekly", channel);
             let sorted_targets = ctx
                 .get_sorted_targets(target_key_prefix, &all_top_channels_key)
                 .await
@@ -635,7 +635,7 @@ mod tests {
 
             // Assert channel1 is not in sorted targets since it has been removed
             // from the top channels
-            let top_channel_key_deleted_channel = top_channel_key("daily", "channel1");
+            let top_channel_key_deleted_channel = top_channel_key("weekly", "channel1");
             let sorted_targets = ctx
                 .get_sorted_targets(target_key_prefix, &all_top_channels_key)
                 .await
@@ -696,7 +696,7 @@ mod tests {
             })?;
 
             let target_key_prefix = "channel_views:";
-            let all_top_channels_key = all_top_channels_key("daily");
+            let all_top_channels_key = all_top_channels_key("weekly");
 
             let original_sorted_targets = ctx
                 .get_sorted_targets(target_key_prefix, &all_top_channels_key)
@@ -706,11 +706,11 @@ mod tests {
             assert_eq!(
                 original_sorted_targets,
                 vec![
-                    ("top_channels:daily:channel5".to_string(), 5),
-                    ("top_channels:daily:channel4".to_string(), 4),
-                    ("top_channels:daily:channel3".to_string(), 3),
-                    ("top_channels:daily:channel2".to_string(), 2),
-                    ("top_channels:daily:channel1".to_string(), 1),
+                    ("top_channels:weekly:channel5".to_string(), 5),
+                    ("top_channels:weekly:channel4".to_string(), 4),
+                    ("top_channels:weekly:channel3".to_string(), 3),
+                    ("top_channels:weekly:channel2".to_string(), 2),
+                    ("top_channels:weekly:channel1".to_string(), 1),
                 ]
             );
 
@@ -739,11 +739,11 @@ mod tests {
             assert_eq!(
                 updated_sorted_targets,
                 vec![
-                    ("top_channels:daily:channel5".to_string(), 5),
-                    ("top_channels:daily:channel4".to_string(), 4),
-                    ("top_channels:daily:channel3".to_string(), 3),
-                    ("top_channels:daily:channel1".to_string(), 2),
-                    ("top_channels:daily:channel2".to_string(), 2),
+                    ("top_channels:weekly:channel5".to_string(), 5),
+                    ("top_channels:weekly:channel4".to_string(), 4),
+                    ("top_channels:weekly:channel3".to_string(), 3),
+                    ("top_channels:weekly:channel1".to_string(), 2),
+                    ("top_channels:weekly:channel2".to_string(), 2),
                 ]
             );
 
