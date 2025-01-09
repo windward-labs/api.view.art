@@ -256,7 +256,8 @@ async fn process_time_range(
 
     // Add the target to the list if it should be added
     if should_add_target {
-        conn.rpush(&params.top_targets_list_key, &params.target_count_key)
+        let _: () = conn
+            .rpush(&params.top_targets_list_key, &params.target_count_key)
             .await
             .map_err(|err| {
                 tracing::error!("Error adding target to list: {err:?}");
