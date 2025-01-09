@@ -231,10 +231,10 @@ async fn process_time_range(
         .any(|(name, _)| *name == params.target_count_key);
 
     let should_add_target = !target_exists
-        && (sorted_targets.len() < params.top_targets_count
-            || data_points.len() > min_target.1);
+        && (sorted_targets.len() < params.top_targets_count || data_points.len() > min_target.1);
 
-    let should_prune = sorted_targets.len() > params.top_targets_count || (should_add_target && sorted_targets.len() >= params.top_targets_count);
+    let should_prune = sorted_targets.len() > params.top_targets_count
+        || (should_add_target && sorted_targets.len() >= params.top_targets_count);
 
     // Prune the list if it has more than the max number of targets
     if should_prune {
@@ -245,7 +245,7 @@ async fn process_time_range(
         };
         conn.ltrim(&params.top_targets_list_key, 0, end_index as isize)
             .await
-            .map_err(|err| {
+            .map_err(|_| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "Redis error while trimming list".to_string(),
@@ -398,7 +398,7 @@ mod tests {
             crate::{
                 routes::stream::{get_sorted_top_targets, log_channel_view},
                 utils::{
-                    keys::{channel_view_key, top_channel_key, top_channel_list_key},
+                    keys::{channel_view_key, top_channel_list_key},
                     redis::{ts_add, TimeSeriesCommands},
                 },
                 AppState,
@@ -578,7 +578,7 @@ mod tests {
             assert_eq!(sorted_targets.len(), 5);
 
             // Assert pruned is not in sorted targets
-            let top_channel_1_key = top_channel_key("weekly", "test_channel_1");
+            let top_channel_1_key = "top_channels:weekly:test_channel_1";
             assert!(
                 !sorted_targets
                     .iter()
@@ -624,7 +624,7 @@ mod tests {
             assert_eq!(channel_view_count, "3");
 
             // Assert pruned is not in sorted targets
-            let top_channel_2_key = top_channel_key("weekly", "test_channel_2");
+            let top_channel_2_key = "top_channels:weekly:test_channel_2";
             assert!(
                 !sorted_targets
                     .iter()

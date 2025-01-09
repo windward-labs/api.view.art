@@ -30,6 +30,7 @@ pub async fn ts_incrby(
         })
 }
 
+#[cfg(test)]
 pub async fn ts_add(
     conn: &mut PooledConnection<'_, RedisConnectionManager>,
     key: &str,
@@ -56,6 +57,7 @@ pub trait TimeSeriesCommands: Send {
         timestamp: Option<i64>,
     ) -> Pin<Box<dyn Future<Output = RedisResult<()>> + Send + 'a>>;
 
+    #[cfg(test)]
     fn ts_add<'a>(
         &'a mut self,
         key: &'a str,
@@ -93,6 +95,7 @@ impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
         })
     }
 
+    #[cfg(test)]
     fn ts_add<'a>(
         &'a mut self,
         key: &'a str,
