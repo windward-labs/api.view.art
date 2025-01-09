@@ -243,7 +243,8 @@ async fn process_time_range(
         } else {
             params.top_targets_count - 1
         };
-        conn.ltrim(&params.top_targets_list_key, 0, end_index as isize)
+        let _: () = conn
+            .ltrim(&params.top_targets_list_key, 0, end_index as isize)
             .await
             .map_err(|_| {
                 (
