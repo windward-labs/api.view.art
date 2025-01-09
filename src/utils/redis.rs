@@ -2,7 +2,7 @@ use {
     axum::http::StatusCode,
     bb8::PooledConnection,
     bb8_redis::{
-        redis::{aio::ConnectionLike, AsyncCommands, Cmd, RedisResult},
+        redis::{aio::ConnectionLike, Cmd, RedisResult},
         RedisConnectionManager,
     },
     serde_json::json,
@@ -30,6 +30,7 @@ pub async fn ts_incrby(
         })
 }
 
+#[cfg(test)]
 pub async fn ts_add(
     conn: &mut PooledConnection<'_, RedisConnectionManager>,
     key: &str,
@@ -48,19 +49,6 @@ pub async fn ts_add(
         })
 }
 
-pub async fn delete(
-    conn: &mut PooledConnection<'_, RedisConnectionManager>,
-    key: &str,
-) -> Result<(), (StatusCode, String)> {
-    conn.del(key).await.map_err(|err| {
-        tracing::error!("Error deleting key {}: {:?}", key, err);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({ "error": "Redis error while deleting key" }).to_string(),
-        )
-    })
-}
-
 pub trait TimeSeriesCommands: Send {
     fn ts_incrby<'a>(
         &'a mut self,
@@ -69,6 +57,7 @@ pub trait TimeSeriesCommands: Send {
         timestamp: Option<i64>,
     ) -> Pin<Box<dyn Future<Output = RedisResult<()>> + Send + 'a>>;
 
+    #[cfg(test)]
     fn ts_add<'a>(
         &'a mut self,
         key: &'a str,
@@ -106,6 +95,7 @@ impl<T: ConnectionLike + Send> TimeSeriesCommands for T {
         })
     }
 
+    #[cfg(test)]
     fn ts_add<'a>(
         &'a mut self,
         key: &'a str,
