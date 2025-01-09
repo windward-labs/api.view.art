@@ -96,7 +96,7 @@ pub async fn log_channel_view(
         // ("monthly", 30 * 24 * 60 * 60), // 30 days
     ];
 
-    let top_channels_count = if cfg!(test) { 5 } else { 5 };
+    let top_channels_count = if cfg!(test) { 5 } else { 15 };
 
     // Check if the channel exists
     check_target_exists(&mut conn, &channel_key).await?;
@@ -578,11 +578,10 @@ mod tests {
             assert_eq!(sorted_targets.len(), 5);
 
             // Assert pruned is not in sorted targets
-            let top_channel_1_key = "top_channels:weekly:test_channel_1";
             assert!(
                 !sorted_targets
                     .iter()
-                    .any(|(name, _)| name == &top_channel_1_key),
+                    .any(|(name, _)| name == "top_channels:weekly:test_channel_1"),
                 "test_channel_1 should not be in sorted targets"
             );
 
@@ -624,11 +623,10 @@ mod tests {
             assert_eq!(channel_view_count, "3");
 
             // Assert pruned is not in sorted targets
-            let top_channel_2_key = "top_channels:weekly:test_channel_2";
             assert!(
                 !sorted_targets
                     .iter()
-                    .any(|(name, _)| name == &top_channel_2_key),
+                    .any(|(name, _)| name == "top_channels:weekly:test_channel_2"),
                 "test_channel_2 should not be in sorted targets"
             );
             assert_eq!(sorted_targets.len(), 5);
