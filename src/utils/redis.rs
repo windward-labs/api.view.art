@@ -2,7 +2,7 @@ use {
     axum::http::StatusCode,
     bb8::PooledConnection,
     bb8_redis::{
-        redis::{aio::ConnectionLike, AsyncCommands, Cmd, RedisResult},
+        redis::{aio::ConnectionLike, Cmd, RedisResult},
         RedisConnectionManager,
     },
     serde_json::json,
@@ -46,19 +46,6 @@ pub async fn ts_add(
                 json!({ "error": "Redis error while adding time series data" }).to_string(),
             )
         })
-}
-
-pub async fn delete(
-    conn: &mut PooledConnection<'_, RedisConnectionManager>,
-    key: &str,
-) -> Result<(), (StatusCode, String)> {
-    conn.del(key).await.map_err(|err| {
-        tracing::error!("Error deleting key {}: {:?}", key, err);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({ "error": "Redis error while deleting key" }).to_string(),
-        )
-    })
 }
 
 pub trait TimeSeriesCommands: Send {

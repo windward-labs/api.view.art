@@ -42,16 +42,16 @@ pub fn top_channel_key(range: &str, channel: &str) -> String {
     format!("{}:{}:{}", TOP_CHANNEL_KEY, range, channel).to_ascii_lowercase()
 }
 
-pub fn all_top_channels_key(range: &str) -> String {
-    format!("{}:{}:*", TOP_CHANNEL_KEY, range).to_ascii_lowercase()
+pub fn top_channel_list_key(range: &str) -> String {
+    format!("{}:{}", TOP_CHANNEL_KEY, range).to_ascii_lowercase()
 }
 
 pub fn top_item_key(range: &str, item_caid: &str) -> String {
     format!("{}:{}:{}", TOP_ITEM_KEY, range, item_caid).to_ascii_lowercase()
 }
 
-pub fn all_top_items_key(range: &str) -> String {
-    format!("{}:{}:*", TOP_ITEM_KEY, range).to_ascii_lowercase()
+pub fn top_items_list_key(range: &str) -> String {
+    format!("{}:{}", TOP_ITEM_KEY, range).to_ascii_lowercase()
 }
 
 pub fn nonce_key(address: &Address, chain_id: u64) -> String {
@@ -151,12 +151,12 @@ mod tests {
     }
 
     #[test]
-    fn test_all_top_channels_key() {
-        let key = all_top_channels_key("daily");
-        assert_eq!(key, "top_channels:daily:*");
+    fn test_top_channel_list_key() {
+        let key = top_channel_list_key("daily");
+        assert_eq!(key, "top_channels:daily");
 
-        let key = all_top_channels_key("DAILY");
-        assert_eq!(key, "top_channels:daily:*");
+        let key = top_channel_list_key("DAILY");
+        assert_eq!(key, "top_channels:daily");
     }
 
     #[test]
@@ -169,12 +169,12 @@ mod tests {
     }
 
     #[test]
-    fn test_all_top_items_key() {
-        let key = all_top_items_key("daily");
-        assert_eq!(key, "top_items:daily:*");
+    fn test_top_items_list_key() {
+        let key = top_items_list_key("daily");
+        assert_eq!(key, "top_items:daily");
 
-        let key = all_top_items_key("DAILY");
-        assert_eq!(key, "top_items:daily:*");
+        let key = top_items_list_key("DAILY");
+        assert_eq!(key, "top_items:daily");
     }
 
     #[test]
