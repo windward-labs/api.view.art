@@ -60,7 +60,10 @@ pub struct LinkedAccount {
     #[serde(rename = "type")]
     pub account_type: String,
 
-    pub address: String,
+    /// Present for wallet and email accounts; absent for others such as
+    /// passkeys.
+    #[serde(default)]
+    pub address: Option<String>,
 }
 
 // Custom deserializer for `linked_accounts`
@@ -95,6 +98,18 @@ impl PrivyClaims {
         }
 
         Ok(())
+    }
+
+    /// Whether `wallet` is one of the account's linked wallets.
+    pub fn links_wallet(&self, wallet: &Address) -> bool {
+        self.linked_accounts.iter().any(|account| {
+            account.account_type == "wallet"
+                && account
+                    .address
+                    .as_deref()
+                    .and_then(|address| Address::from_str(address).ok())
+                    .is_some_and(|wallet_address| wallet_address == *wallet)
+        })
     }
 }
 
@@ -255,13 +270,7 @@ pub async fn verify_privy_auth(
 
     // Ensure the connected-wallet matches one of the wallet addresses in
     // linked_accounts
-    if !privy_claims.linked_accounts.iter().any(|account| {
-        account.account_type == "wallet"
-            && alloy::primitives::Address::from_str(&account.address)
-                .map_or(false, |wallet_address| {
-                    wallet_address == connected_wallet_address
-                })
-    }) {
+    if !privy_claims.links_wallet(&connected_wallet_address) {
         let msg = "connected-wallet does not match any linked accounts".to_string();
         tracing::error!("{}", msg);
         return Err(PrivyAuthError::ClaimsValidationError(msg));
@@ -494,6 +503,62 @@ pub mod tests {
             exp: Utc::now().timestamp() + 90 * 24 * 60 * 60,
         };
         encode(&Header::default(), &claims, &keys.encoding).unwrap()
+    }
+
+    /// Privy claims as they appear in an identity token: `linked_accounts` is a
+    /// JSON-encoded string.
+    fn privy_claims_with_linked_accounts(linked_accounts: serde_json::Value) -> PrivyClaims {
+        serde_json::from_value(json!({
+            "linked_accounts": linked_accounts.to_string(),
+            "iss": "privy.io",
+            "iat": 1_700_000_000,
+            "aud": "test_app_id",
+            "exp": 1_700_003_600,
+        }))
+        .expect("claims should deserialize")
+    }
+
+    #[test]
+    /// Passkey (and other non-address) linked accounts have no `address`
+    /// field. They must not break auth for the account's wallets.
+    fn test_privy_claims_with_passkey_linked_account() {
+        let wallet: Address = "0x04e4024eDD54d9870F97DE4040198b4254A7C1f0"
+            .parse()
+            .unwrap();
+        let claims = privy_claims_with_linked_accounts(json!([
+            { "type": "email", "address": "someone@example.com" },
+            {
+                "type": "wallet",
+                "address": "0x04e4024eDD54d9870F97DE4040198b4254A7C1f0",
+                "chain_type": "ethereum",
+                "wallet_client_type": "privy"
+            },
+            {
+                "type": "passkey",
+                "credential_id": "abc123",
+                "authenticator_name": "iCloud Keychain",
+                "enrolled_in_mfa": false
+            }
+        ]));
+
+        assert_eq!(claims.linked_accounts.len(), 3);
+        assert!(claims.links_wallet(&wallet));
+    }
+
+    #[test]
+    /// Only `wallet` accounts count: an email or passkey never matches, and a
+    /// wallet that isn't linked doesn't either.
+    fn test_privy_claims_links_wallet_only_for_linked_wallets() {
+        let other: Address = "0x0000000000000000000000000000000000000001"
+            .parse()
+            .unwrap();
+        let claims = privy_claims_with_linked_accounts(json!([
+            { "type": "email", "address": "0x0000000000000000000000000000000000000001" },
+            { "type": "passkey", "credential_id": "abc123" },
+            { "type": "wallet", "address": "0x04e4024eDD54d9870F97DE4040198b4254A7C1f0" }
+        ]));
+
+        assert!(!claims.links_wallet(&other));
     }
 
     #[ignore]

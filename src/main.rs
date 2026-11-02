@@ -287,7 +287,8 @@ mod tests {
                                     .unwrap();
                             assert!(!content["taken"].as_bool().unwrap());
 
-                            // setting the channel without the team API key should fail
+                            // setting the channel without the team API key
+                            // should fail
                             let result = reqwest::Client::new()
                                 .post(format!("{}/v1/channel/test", listening_url))
                                 .header("User-Agent", "integration_test")
@@ -402,7 +403,8 @@ mod tests {
                                     .unwrap();
                             assert!(content["taken"].as_bool().unwrap());
 
-                            // check if channel is in list of channels for address
+                            // check if channel is in list of channels for
+                            // address
                             let result = reqwest::Client::new()
                                 .get(format!(
                                     "{}/v1/wallet/{:#?}/channels",
@@ -640,7 +642,8 @@ Issued At: {}"#,
 
         // Now we test with a smart contract wallet
         {
-            // Set the nonce for the wallet so that the stored signature is valid
+            // Set the nonce for the wallet so that the stored signature is
+            // valid
             let nonce_key = nonce_key(
                 &"0x3635a25d6c9b69c517aaeb17a9a30468202563fe"
                     .parse()
@@ -652,8 +655,8 @@ Issued At: {}"#,
                 .await
                 .unwrap();
 
-            // Set an old format address key for the wallet so that the migration flow
-            // occurs
+            // Set an old format address key for the wallet so that the
+            // migration flow occurs
             let address_key = old_address_key(
                 &"0x3635a25d6c9b69c517aaeb17a9a30468202563fe"
                     .parse()

@@ -466,7 +466,8 @@ pub async fn get_top_channels_weekly(State(state): State<AppState>) -> impl Into
                                     .await;
 
                             if let Ok(data_points) = range_result {
-                                let count = data_points.len(); // Count each entry
+                                // Count each entry
+                                let count = data_points.len();
                                 if count > 0 {
                                     let channel_name =
                                         key.trim_start_matches("channel_views:").to_string();
@@ -493,7 +494,7 @@ pub async fn get_top_channels_weekly(State(state): State<AppState>) -> impl Into
             // Sort and take the top 30
             let mut sorted_channels: Vec<(String, usize)> =
                 channels_with_counts.into_iter().collect();
-            sorted_channels.sort_by(|a, b| b.1.cmp(&a.1));
+            sorted_channels.sort_by_key(|(_, views)| std::cmp::Reverse(*views));
 
             // Map sorted channels to the desired format
             let formatted_channels: Vec<_> = sorted_channels

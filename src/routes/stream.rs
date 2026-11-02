@@ -570,7 +570,8 @@ mod tests {
             let channel_view_count = channel_view_result.unwrap().1;
             assert_eq!(channel_view_count, "1");
 
-            // Assert new channel is not in sorted targets since it was just created
+            // Assert new channel is not in sorted targets since it was just
+            // created
             let top_channel_list_key = top_channel_list_key("weekly");
             let sorted_targets = ctx.get_sorted_targets(&top_channel_list_key).await.unwrap();
             assert!(
@@ -600,8 +601,8 @@ mod tests {
             let channel_view_count = channel_view_result.unwrap().1;
             assert_eq!(channel_view_count, "2");
 
-            // Assert new channel is still not in sorted targets since it doesn't have
-            // enough views yet
+            // Assert new channel is still not in sorted targets since it
+            // doesn't have enough views yet
             let sorted_targets = ctx.get_sorted_targets(&top_channel_list_key).await.unwrap();
             assert!(
                 !sorted_targets
